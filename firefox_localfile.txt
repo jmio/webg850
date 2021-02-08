@@ -1,0 +1,9 @@
+１．設定画面を開く
+
+アドレスバーに「about:config」を入力して Enter
+
+２．設定を変更する
+
+「security.fileuri.strict_origin_policy」の値を、true から false に変更する。
+
+以上でローカルファイルの読み込みも出来るようになります。

@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>WebG850</title>
+    <style type="text/css">
+        textarea.HEXINPUT {
+            height: 20px;
+        }
+        .SMALL {
+            font-size: xx-small;
+        }
+        .LARGE {
+            font-size: medium;
+        }
+        li {
+        	text-decoration: none;
+        }
+        .main1 {
+        	display: flex;
+        	justify-content: space-around;
+        }
+        .main2 {
+        	display: flex;
+        	justify-content: space-around;
+        }
+        table.KEYBOARD {
+            border: solid 1px #000;
+            border-collapse: collapse;
+            table-layout: fixed;
+            background-color: #BDB76B;
+        }
+        th {
+            border: solid 1px #000;
+            border-collapse: collapse;        	
+        }
+        td {
+            border: solid 1px #000;
+            border-collapse: collapse;
+        }
+    </style>
+</head>
+<body>
+    <div class="main1">
+            <section class="LCD">
+                <script type="text/javascript" src="./mdZ80.js"></script>
+                <script type="text/javascript" src="./z80.js"></script>
+                <script type="text/javascript" src="./hex.js"></script>
+                <script type="text/javascript" src="./jszip.js"></script>
+                <script type="text/javascript" src="./g800main.js?zoom=4&end=on&start=0&buzzer=n">HTML5対応ブラウザが必要です.</script>
+            </section>
+            <section class="KBD1">
+                <table class="KEYBOARD">
+                    <tr>
+                        <td align="center"><div class="SMALL">ASMBL</div><button value="GKEY_BASIC">BASIC</button></td>
+                        <td align="center"><div class="SMALL">C</div><button value="GKEY_TEXT">TEXT</button></td>
+                        <td align="center"><div class="SMALL">　</div><button value="GKEY_CONST">CONST</button></td>
+                        <td align="center"><div class="SMALL">コントラスト</div><button value="GKEY_ANS">ANS</button></td>
+                        <td align="center"><div class="SMALL">　</div><button value="GKEY_OFF">OFF</button></td>
+                        <td align="center"><div class="SMALL">BREAK</div><button value="GKEY_BREAK" onmousedown="poweron_seq()" ontouchstart="poweron_seq()">ON</button></td>
+                    </tr>
+                    <tr>
+                        <td align="center"><button value="GKEY_2NDF">2ndF</button></td>
+                        <td align="center"><div class="SMALL">→xy</div><button value="GKEY_LKAKKO">(</button></td>
+                        <td align="center"><div class="SMALL">BASE-n</div><button value="GKEY_RKAKKO">)</button></td>
+                        <td align="center"><div class="SMALL">→rΘ</div><button value="GKEY_HAT">^</button></td>
+                        <td align="center"><div class="SMALL">STAT</div><button value="GKEY_MDF">MDF</button></td>
+                        <td align="center"><div class="SMALL">CA</div><button value="GKEY_CLS">CLS</button></td>
+                    </tr>
+                    <tr bgcolor="#55DD55">
+                        <td align="center"><button class="SMALL" value="GKEY_NONE" onclick="downloadData(memtoihx(0x0040,0x7FF0), 'ram.txt')">RAMSAVE</button></td>
+                        <td align="center"><button class="SMALL" value="GKEY_NONE" onclick="loadData()">LOAD IHX</button></td>
+                        <td align="center"><button class="SMALL" value="GKEY_NONE" onclick="z80debug_log()">REGS</button></td>
+                        <td align="center" colspan="1">
+                        	  <input type="checkbox" id="BKEN" name="BKEN">
+                              <label class="SMALL" for="BKEN">BKPT</label>
+                        </td>
+                        <td align="center" colspan="1">
+                              <input type="checkbox" id="FETCH" name="FETCH">
+                              <label class="SMALL" for="FETCH">FETCH</label>
+                        </td>
+                        <td align="center" colspan="1">
+                       	0x<textarea id="TEXT_BREAK" cols="6" class="HEXINPUT">0</textarea>
+                        </td>
+                    </tr>
+                    <tr bgcolor="#55DD55">
+                        <td align="center"><button value="GKEY_NONE" onclick="clearconsole()">CLR</button></td>
+                        <td align="center"><button value="GKEY_NONE" onclick="consoleonoff()">ENB</button></td>
+                        <td align="center"><button value="GKEY_NONE" onclick="document.getElementById('TEXT_START').value = pad00('0000',disasm(parseInt(document.getElementById('TEXT_START').value, 16), parseInt(document.getElementById('TEXT_COUNT').value, 10)).toString(16).toUpperCase())">DISASM</button></td>
+                        <td align="center"><button value="GKEY_NONE" onclick="document.getElementById('TEXT_START').value = pad00('0000',memdump(parseInt(document.getElementById('TEXT_START').value, 16), parseInt(document.getElementById('TEXT_COUNT').value, 10)).toString(16).toUpperCase())">DUMP</button></td>
+                        <td align="center"><button value="GKEY_NONE" onclick="z80break=1; z80exitbreak=1;">STEP</button></td>
+                        <td align="center"><button value="GKEY_NONE" onclick="if (z80break) z80exitbreak = 2;">RUN</button></td>
+                    </tr>
+                </table>
+                DISASM START:0x<textarea id="TEXT_START" cols="6" class="HEXINPUT">100</textarea>
+                COUNT:<textarea id="TEXT_COUNT" cols="6" class="HEXINPUT">10</textarea>
+            </section>
+    </div>
+    <div class="main2">
+            <section class="KBD2">
+                <table class="KEYBOARD">
+                    <tr>
+                        <td align="center"><div class="SMALL">　</div><button class="LARGE" value="GKEY_TAB">TAB</button></td>
+                        <td align="center"><div class="SMALL">!</div><button class="LARGE" value="GKEY_Q">Q</button></td>
+                        <td align="center"><div class="SMALL">"</div><button class="LARGE" value="GKEY_W">W</button></td>
+                        <td align="center"><div class="SMALL">#</div><button class="LARGE" value="GKEY_E">E</button></td>
+                        <td align="center"><div class="SMALL">$</div><button class="LARGE" value="GKEY_R">R</button></td>
+                        <td align="center"><div class="SMALL">%</div><button class="LARGE" value="GKEY_T">T</button></td>
+                        <td align="center"><div class="SMALL">&</div><button class="LARGE" value="GKEY_Y">Y</button></td>
+                        <td align="center"><div class="SMALL">'</div><button class="LARGE" value="GKEY_U">U</button></td>
+                        <td align="center"><div class="SMALL">&lt</div><button class="LARGE" value="GKEY_I">I</button></td>
+                        <td align="center"><div class="SMALL">&gt</div><button class="LARGE" value="GKEY_O">O</button></td>
+                        <td align="center"><div class="SMALL">@</div><button class="LARGE" value="GKEY_P">P</button></td>
+                        <td align="center"><div class="SMALL">　</div><button class="LARGE" value="GKEY_BACKSPACE">BS</button></td>
+                    </tr>
+                    <tr>
+                        <td align="center"><div class="SMALL">小文字</div><button class="LARGE" value="GKEY_CAPS">CAPS</button></td>
+                        <td align="center"><div class="SMALL">[</div><button class="LARGE" value="GKEY_A">A</button></td>
+                        <td align="center"><div class="SMALL">]</div><button class="LARGE" value="GKEY_S">S</button></td>
+                        <td align="center"><div class="SMALL">{</div><button class="LARGE" value="GKEY_D">D</button></td>
+                        <td align="center"><div class="SMALL">}</div><button class="LARGE" value="GKEY_F">F</button></td>
+                        <td align="center"><div class="SMALL">￥</div><button class="LARGE" value="GKEY_G">G</button></td>
+                        <td align="center"><div class="SMALL">|</div><button class="LARGE" value="GKEY_H">H</button></td>
+                        <td align="center"><div class="SMALL">~</div><button class="LARGE" value="GKEY_J">J</button></td>
+                        <td align="center"><div class="SMALL">_</div><button class="LARGE" value="GKEY_K">K</button></td>
+                        <td align="center"><div class="SMALL">=</div><button class="LARGE" value="GKEY_L">L</button></td>
+                        <td align="center"><div class="SMALL">:</div><button class="LARGE" value="GKEY_SEMICOLON">;</button></td>
+                        <td align="center"><div class="SMALL">P⇔NP</div><button class="LARGE" value="GKEY_RETURN">CR</button></td>
+                    </tr>
+                    <tr>
+                        <td align="center"><div class="SMALL">　</div><button class="LARGE" value="GKEY_2NDF">2ndF</button></td>
+                        <td align="center"><div class="SMALL">INPUT</div><button class="LARGE" value="GKEY_Z">Z</button></td>
+                        <td align="center"><div class="SMALL">PRINT</div><button class="LARGE" value="GKEY_X">X</button></td>
+                        <td align="center"><div class="SMALL">CONT</div><button class="LARGE" value="GKEY_C">C</button></td>
+                        <td align="center"><div class="SMALL">RUN</div><button class="LARGE" value="GKEY_V">V</button></td>
+                        <td align="center"><div class="SMALL">LIST</div><button class="LARGE" value="GKEY_B">B</button></td>
+                        <td align="center"><div class="SMALL">SAVE</div><button class="LARGE" value="GKEY_N">N</button></td>
+                        <td align="center"><div class="SMALL">LOAD</div><button class="LARGE" value="GKEY_M">M</button></td>
+                        <td align="center"><div class="SMALL">?</div><button class="LARGE" value="GKEY_COMMA">,</button></td>
+                        <td align="center"><div class="SMALL">　</div><button class="LARGE" value="GKEY_COLON">:</button></td>
+                        <td align="center"><div class="SMALL">　</div><button class="LARGE" value="GKEY_UP">↑</button></td>
+                        <td align="center"><div class="SMALL">　</div><button class="LARGE" value="GKEY_RETURN">CR</button></td>
+                    </tr>
+                    <tr>
+                        <td align="center"><div class="SMALL">　</div><button class="LARGE" value="GKEY_RESET">RST</button></td>
+                        <td align="center"><div class="SMALL">ー</div><button class="SMALL" value="GKEY_KANA">カナ</button></td>
+                        <td align="center" colspan="6"><div class="SMALL">　</div><button class="LARGE" value="GKEY_SPACE">--　SPACE　--</button></td>
+                        <td align="center"><div class="SMALL">DEL</div><button class="SMALL" value="GKEY_INSERT">INS</button></td>
+                        <td align="center"><div class="SMALL">　</div><button class="LARGE" value="GKEY_LEFT">←</button></td>
+                        <td align="center"><div class="SMALL">　</div><button class="LARGE" value="GKEY_DOWN">↓</button></td>
+                        <td align="center"><div class="SMALL">　</div><button class="LARGE" value="GKEY_RIGHT">→</button></td>
+                    </tr>
+                </table>
+            </section>
+            <section class="KBD3">
+                <table class="KEYBOARD">
+                    <tr>
+                        <td align="center"><div class="SMALL">°</div><button class="LARGE" value="GKEY_7">　7　</button></td>
+                        <td align="center"><div class="SMALL">′</div><button class="LARGE" value="GKEY_8">　8　</button></td>
+                        <td align="center"><div class="SMALL">″</div><button class="LARGE" value="GKEY_9">　9　</button></td>
+                        <td align="center"><div class="SMALL">　</div><button class="LARGE" value="GKEY_SLASH">　/　</button></td>
+                        <td align="center"><div class="SMALL">　</div><button class="LARGE" value="GKEY_RCM">RCM</button></td>
+                    </tr>
+                    <tr>
+                        <td align="center"><div class="SMALL">　</div><button class="LARGE" value="GKEY_4">　4　</button></td>
+                        <td align="center"><div class="SMALL">　</div><button class="LARGE" value="GKEY_5">　5　</button></td>
+                        <td align="center"><div class="SMALL">　</div><button class="LARGE" value="GKEY_6">　6　</button></td>
+                        <td align="center"><div class="SMALL">　</div><button class="LARGE" value="GKEY_ASTER">　*　</button></td>
+                        <td align="center"><div class="SMALL">M-</div><button class="LARGE" value="GKEY_MPLUS">M+　</button></td>
+                    </tr>
+                    <tr>
+                        <td align="center"><div class="SMALL">　</div><button class="LARGE" value="GKEY_1">　1　</button></td>
+                        <td align="center"><div class="SMALL">　</div><button class="LARGE" value="GKEY_2">　2　</button></td>
+                        <td align="center"><div class="SMALL">　</div><button class="LARGE" value="GKEY_3">　3　</button></td>
+                        <td align="center"><div class="SMALL">(-)</div><button class="LARGE" value="GKEY_MINUS">　-　</button></td>
+                        <td align="center"><div class="SMALL">P⇔NP</div><button class="LARGE" value="GKEY_RETURN">CR　</button></td>
+                    </tr>
+                    <tr>
+                        <td align="center"><div class="SMALL">　</div><button class="LARGE" value="GKEY_0">　0　</button></td>
+                        <td align="center"><div class="SMALL">DRG</div><button class="LARGE" value="GKEY_PERIOD">　.　</button></td>
+                        <td align="center"><div class="SMALL">Exp</div><button class="LARGE" value="GKEY_EQUAL">　=　</button></td>
+                        <td align="center"><div class="SMALL">　</div><button class="LARGE" value="GKEY_PLUS">　+　</button></td>
+                        <td align="center"><div class="SMALL">　</div><button class="LARGE" value="GKEY_RETURN">CR　</button></td>
+                    </tr>
+                </table>
+            </section>
+    </div>
+    <textarea id="TEXT_CONSOLE" cols="100" rows="8" style="display: none" spellcheck="false"></textarea>
+</body>
+</html>
