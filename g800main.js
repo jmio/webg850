@@ -1019,6 +1019,10 @@ function bsaveCapture(x) {
 	if(!bsaveEnable)
 		return;
 
+	/* BLOAD の送出中は取り込まない (自分の流した波形を拾ってしまう) */
+	if(bloadEdges != null || bloadArmed)
+		return;
+
 	var level = (x & 0x80) ? 1: 0;
 	if(level == bsaveLevel)
 		return;
@@ -1206,8 +1210,221 @@ function out1e(x) {
 /*
 	11pinI/Fの入力
 */
+/*
+	BLOAD へ流し込む波形
+
+	立ち上がり・立ち下がりの絶対時刻(累積 Z80 ステート数)を並べた配列を持ち、
+	in1f() から現在のレベルを求める。ROM 側は 3usec 程度の間隔で
+	ポート 0x1F を読み続けるので、この解像度で十分間に合う。
+*/
+var bloadEdges = null;
+
+/* 次に処理する立ち上がり・立ち下がりの位置 */
+var bloadIndex = 0;
+
+/* 現在の入力レベル */
+var bloadLevel = 0;
+
+/* 波形の送出を待っている状態かどうか */
+var bloadArmed = false;
+
+/* 前回 in1f() が読まれた時刻 */
+var bloadLastPoll = 0;
+
+/* データ 0 と 1 の H 期間 (usec) */
+var BLOAD_BIT0_US = 145;
+var BLOAD_BIT1_US = 360;
+
+/* 区切りのパルスの H 期間 (usec) */
+var BLOAD_MARK_US = 26700;
+
+/* BLOAD が見る入力のビット (ポート 0x1F) */
+var BLOAD_BIT = 0x04;
+
+/*
+	1 ブロック分のビット列を作る
+
+	zeros/ones はヘッダの 0 と 1 の個数。ヘッダの末尾の 0 は 1 と同じ個数。
+	データは 9 ビット 1 組で、先頭の 1 に続けて 8 ビットを MSB ファーストで並べる。
+	末尾にはデータ部の 1 の個数を 16bit ビッグエンディアンで付ける。
+*/
+function bloadBits(bytes, zeros, ones) {
+	var bits = new Array();
+	var i, n;
+
+	for(i = 0; i < zeros; i++) bits.push(0);
+	for(i = 0; i < ones; i++)  bits.push(1);
+	for(i = 0; i < ones; i++)  bits.push(0);
+
+	bits.push(1);				/* START_BIT */
+
+	var parity = 0;
+	for(i = 0; i < bytes.length; i++)
+		for(n = 0; n < 8; n++)
+			if(bytes[i] & (1 << n))
+				parity++;
+
+	var all = bytes.concat([(parity >> 8) & 0xff, parity & 0xff]);
+	for(i = 0; i < all.length; i++) {
+		bits.push(1);			/* 各組の先頭ビット */
+		for(n = 7; n >= 0; n--)
+			bits.push((all[i] >> n) & 1);
+	}
+
+	bits.push(1);				/* STOP_BIT */
+	return bits;
+}
+
+/*
+	ヘッダ 48 バイトとメインデータから送出波形を組み立てる
+*/
+function bloadBuild(head, main) {
+	var us = clocks / 1000000;
+	var edges = new Array();
+	var level = 0;
+	var dur = 0;
+	var t = 0;
+
+	/* 同じレベルが続く区間はまとめる */
+	var add = function(lv, u) {
+		if(lv == level) {
+			dur += u;
+			return;
+		}
+		t += dur * us;
+		edges.push(Math.round(t));
+		level = lv;
+		dur = u;
+	};
+
+	var addBits = function(bits) {
+		for(var i = 0; i < bits.length; i++) {
+			var u = bits[i] ? BLOAD_BIT1_US: BLOAD_BIT0_US;
+			add(1, u);
+			add(0, u);
+		}
+	};
+
+	/* PULSES1 */
+	add(1, BLOAD_MARK_US);
+	add(0, 7111000);
+
+	addBits(bloadBits(head, 10000, 40));
+
+	/* PULSES2 */
+	add(0, 1778000);
+	add(1, BLOAD_MARK_US);
+	add(0, 21300);
+	add(1, BLOAD_MARK_US);
+	add(0, 5330);
+
+	addBits(bloadBits(main, 25848, 20));
+
+	/* PULSES3 */
+	add(0, 3556000);
+	add(1, BLOAD_MARK_US);
+	add(0, 1000);
+
+	t += dur * us;
+	edges.push(Math.round(t));
+	return edges;
+}
+
+/*
+	送出を取りやめる
+*/
+function bloadReset() {
+	bloadEdges = null;
+	bloadIndex = 0;
+	bloadLevel = 0;
+	bloadArmed = false;
+}
+
+/*
+	in1f() から呼ばれ、現在の入力レベルを返す
+
+	ROM が細かい間隔でポート 0x1F を読み始めたら BLOAD が待ちに入ったとみなし、
+	そこを起点に波形を流し始める。待機中の読み出しは 1 フレームに 1 回程度なので
+	間隔を見れば区別できる。
+*/
+function bloadPoll() {
+	var now = z80states();
+
+	if(bloadArmed) {
+		if(now - bloadLastPoll < 500) {
+			/* 細かい間隔で読まれている = BLOAD が待っている */
+			bloadArmed = false;
+			bloadIndex = 0;
+			bloadLevel = 0;
+			for(var i = 0; i < bloadEdges.length; i++)
+				bloadEdges[i] += now;
+			console.log("BLOAD: 送出開始\r\n");
+		}
+		bloadLastPoll = now;
+		return 0;
+	}
+	bloadLastPoll = now;
+
+	if(bloadEdges == null)
+		return 0;
+
+	while(bloadIndex < bloadEdges.length && now >= bloadEdges[bloadIndex]) {
+		bloadLevel ^= 1;
+		bloadIndex++;
+	}
+
+	if(bloadIndex >= bloadEdges.length) {
+		bloadEdges = null;
+		bloadLevel = 0;
+		console.log("BLOAD: 送出完了\r\n");
+		return 0;
+	}
+
+	return bloadLevel ? BLOAD_BIT: 0;
+}
+
+/*
+	ファイルを読み込んで送出の準備をする
+
+	ファイルは先頭 48 バイトが PWM1 のデータ部、残りがメインデータ。
+	読み込んだあとに BASIC で BLOAD を実行すると送出が始まる。
+*/
+function bloadLoadFile() {
+	var input = document.createElement('input');
+	input.type = 'file';
+
+	input.onchange = function(e) {
+		var reader = new FileReader();
+		reader.onload = function(ev) {
+			var all = new Uint8Array(ev.target.result);
+			if(all.length < 49) {
+				alert("ファイルが短すぎます");
+				return;
+			}
+
+			var head = Array.prototype.slice.call(all.subarray(0, 48));
+			var main = Array.prototype.slice.call(all.subarray(48));
+			var size = head[0x12] | (head[0x13] << 8);
+
+			bloadEdges = bloadBuild(head, main);
+			bloadIndex = 0;
+			bloadLevel = 0;
+			bloadArmed = true;
+
+			console.log(
+				"BLOAD: 準備完了 mode=" + pad00hex("00", head[0]) +
+				" size=" + main.length + "(申告 " + size + ")" +
+				" edges=" + bloadEdges.length + "\r\n");
+			alert("読み込みました。BASIC で BLOAD を実行してください。");
+		};
+		reader.readAsArrayBuffer(e.target.files[0]);
+	};
+
+	input.click();
+}
+
 function in1f() {
-	return keyBreak | (siocapture == true ? 0x02 : 0x00) ; // for Serial Capture
+	return keyBreak | bloadPoll() | (siocapture == true ? 0x02 : 0x00) ; // for Serial Capture
 }
 function out1f(x) {
 }

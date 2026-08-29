@@ -96,7 +96,8 @@
                               <input type="checkbox" id="BSAVECAP" name="BSAVECAP" onclick="bsaveEnable=this.checked; bsaveReset();">
                               <label class="SMALL" for="BSAVECAP">BSAVE CAPTURE</label>
                         </td>
-                        <td align="center" colspan="4" class="SMALL">BSAVE の出力を復号して bsave.bin に保存します</td>
+                        <td align="center" colspan="2"><button class="SMALL" value="GKEY_NONE" onclick="bloadLoadFile()">LOAD BIN</button></td>
+                        <td align="center" colspan="2" class="SMALL">BSAVE を bsave.bin へ保存 / LOAD BIN の後に BLOAD で書き戻し</td>
                     </tr>
                 </table>
                 DISASM START:0x<textarea id="TEXT_START" cols="6" class="HEXINPUT">100</textarea>
