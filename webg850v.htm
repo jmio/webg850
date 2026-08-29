@@ -91,6 +91,13 @@
                         <td align="center"><button value="GKEY_NONE" onclick="z80break=1; z80exitbreak=1;">STEP</button></td>
                         <td align="center"><button value="GKEY_NONE" onclick="if (z80break) z80exitbreak = 2;">RUN</button></td>
                     </tr>
+                    <tr bgcolor="#55DD55">
+                        <td align="center" colspan="2">
+                              <input type="checkbox" id="BSAVECAP" name="BSAVECAP" onclick="bsaveEnable=this.checked; bsaveReset();">
+                              <label class="SMALL" for="BSAVECAP">BSAVE CAPTURE</label>
+                        </td>
+                        <td align="center" colspan="4" class="SMALL">BSAVE の出力を復号して bsave.bin に保存します</td>
+                    </tr>
                 </table>
                 DISASM START:0x<textarea id="TEXT_START" cols="6" class="HEXINPUT">100</textarea>
                 COUNT:<textarea id="TEXT_COUNT" cols="6" class="HEXINPUT">10</textarea>

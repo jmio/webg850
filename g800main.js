@@ -453,6 +453,33 @@ var siocapture = false;
 var bken = false;
 var fetch = false;
 
+/* 累積 Z80 ステート数 (フレームをまたいで単調増加する) */
+var z80totalStates = 0;
+
+/* BSAVE のキャプチャを行うかどうか */
+var bsaveEnable = false;
+
+/* XOUT(ポート 0x18 の bit7) の直前のレベル */
+var bsaveLevel = 0;
+
+/* 立ち上がりを検出した時刻 (累積 Z80 ステート数) */
+var bsaveRise = 0;
+
+/* 収集中のビット列 */
+var bsaveBits = new Array();
+
+/* 区切りのパルスで分けたビット列 */
+var bsaveSegs = new Array();
+
+/* 検出した区切りのパルスの数 */
+var bsaveMarks = 0;
+
+/* 0 と 1 を分ける H 期間のしきい値 (usec) */
+var BSAVE_BIT_US = 250;
+
+/* 区切りのパルスとみなす H 期間のしきい値 (usec) */
+var BSAVE_MARK_US = 1000;
+
 /* フォント */
 var font = new Uint8Array([
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -960,8 +987,143 @@ function serialcapture(x)
 }
 
 
+/*
+	現在の累積 Z80 ステート数を得る
+
+	z80restStates は「まだ消化していないステート数」なので、
+	与えた総数から引けばフレームをまたいだ経過時間になる。
+*/
+function z80states() {
+	return z80totalStates - z80restStates;
+}
+
+/*
+	BSAVE のキャプチャを初期化する
+*/
+function bsaveReset() {
+	bsaveBits = new Array();
+	bsaveSegs = new Array();
+	bsaveMarks = 0;
+	bsaveLevel = 0;
+}
+
+/*
+	BSAVE の出力(XOUT)を取り込む
+
+	データは H 期間の長さで表される。短い H が 0、長い H が 1。
+	さらに長い H は転送を区切るパルスで、PULSES1 に 1 回、
+	PULSES2 に 2 回、PULSES3 に 1 回の合計 4 回現れる。
+	4 回目を検出した時点で 1 回の転送が終わったとみなす。
+*/
+function bsaveCapture(x) {
+	if(!bsaveEnable)
+		return;
+
+	var level = (x & 0x80) ? 1: 0;
+	if(level == bsaveLevel)
+		return;
+	bsaveLevel = level;
+
+	if(level) {
+		/* 立ち上がり。ここから H 期間が始まる */
+		bsaveRise = z80states();
+		return;
+	}
+
+	/* 立ち下がり。H 期間が確定する */
+	var us = (z80states() - bsaveRise) / (clocks / 1000000);
+
+	if(us >= BSAVE_MARK_US) {
+		/* 区切りのパルス */
+		if(bsaveBits.length > 0) {
+			bsaveSegs.push(bsaveBits);
+			bsaveBits = new Array();
+		}
+		bsaveMarks++;
+
+		if(bsaveMarks >= 4)
+			bsaveFinish();
+		return;
+	}
+
+	bsaveBits.push(us >= BSAVE_BIT_US ? 1: 0);
+}
+
+/*
+	PWM のビット列を復号する
+
+	ヘッダ(0 の並び → 1 の並び → 0 の並び)を読み飛ばし、
+	スタートビットの 1 に続く 9 ビット 1 組を MSB ファーストで組み立てる。
+	末尾の 2 バイトはパリティで、データ部に含まれる 1 の個数と一致する。
+*/
+function bsaveDecode(bits) {
+	var i = 0;
+	var n;
+
+	while(i < bits.length && bits[i] == 0) i++;	/* ヘッダの 0 の並び */
+	while(i < bits.length && bits[i] == 1) i++;	/* ヘッダの 1 の並び */
+	while(i < bits.length && bits[i] == 0) i++;	/* ヘッダの 0 の並び */
+
+	if(bits[i] != 1)
+		return null;				/* スタートビットが見つからない */
+	i++;
+
+	var bytes = new Array();
+	while(i + 9 <= bits.length) {
+		var v = 0;
+		for(n = 0; n < 8; n++)
+			v = (v << 1) | bits[i + 1 + n];
+		bytes.push(v);
+		i += 9;
+	}
+
+	if(bytes.length < 3)
+		return null;
+
+	/* 末尾の 2 バイトはパリティ (16bit ビッグエンディアン) */
+	var parity = (bytes[bytes.length - 2] << 8) | bytes[bytes.length - 1];
+	bytes.length = bytes.length - 2;
+
+	var ones = 0;
+	for(i = 0; i < bytes.length; i++)
+		for(n = 0; n < 8; n++)
+			if(bytes[i] & (1 << n))
+				ones++;
+
+	return { data: bytes, parity: parity, ones: ones };
+}
+
+/*
+	1 回分の転送を復号してファイルに書き出す
+
+	保存する形式は PWM1 のデータ部 48 バイトをそのままヘッダとして先頭に置き、
+	続けて PWM2 のメインデータを並べたもの。パリティは送出時に計算し直すので保存しない。
+*/
+function bsaveFinish() {
+	var head = (bsaveSegs.length > 0 ? bsaveDecode(bsaveSegs[0]): null);
+	var main = (bsaveSegs.length > 1 ? bsaveDecode(bsaveSegs[1]): null);
+	bsaveReset();
+
+	if(head == null || main == null) {
+		console.log("BSAVE: 復号できませんでした\r\n");
+		return;
+	}
+
+	var size = head.data[0x12] | (head.data[0x13] << 8);
+	console.log(
+		"BSAVE: mode=" + pad00hex("00", head.data[0]) +
+		" size=" + main.data.length + "(申告 " + size + ")" +
+		" parity=" + (head.parity == head.ones ? "OK": "NG") +
+		"/" + (main.parity == main.ones ? "OK": "NG") + "\r\n");
+
+	var out = new Uint8Array(head.data.length + main.data.length);
+	out.set(head.data, 0);
+	out.set(main.data, head.data.length);
+	downloadBinary(out, "bsave.bin");
+}
 function out18(x) {
 	serialcapture(x);
+	bsaveCapture(x);
 
 	if(wave == null)
 		return;
@@ -3594,6 +3756,7 @@ function run() {
 	fetch = document.getElementById('FETCH').checked;
 	for(k = 0; k < fpsN; k++) {
 		/* プログラムを実行する */
+		z80totalStates += clocks / (fps * fpsN);
 		z80execute(clocks / (fps * fpsN),bken,bkpt);
 
 		/* キー割り込み */
@@ -4034,6 +4197,21 @@ function downloadData(content, filename, mimetype) {
 
 }
 
+/*
+	バイナリをファイルとして書き出す
+
+	downloadData() は内容をデバッグ窓へ出力するため、バイナリには使わない。
+*/
+function downloadBinary(bytes, filename) {
+	var url = (window.URL || window.webkitURL).createObjectURL(
+		new Blob([bytes], { 'type': 'application/octet-stream' }));
+	var link = document.createElement('a');
+	link.download = filename;
+	link.href = url;
+	link.style.display = "none";
+	document.body.appendChild(link);
+	link.click();
+}
 function loadData()
 {
     var input = document.createElement('input');

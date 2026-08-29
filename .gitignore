@@ -6,3 +6,6 @@ docs/binary/
 
 # 使い捨ての作業ページ・スクリプト（解析が終わったら処分する）
 tools/tmp/
+
+# Playwright MCP が作る作業ディレクトリ
+.playwright-mcp/
