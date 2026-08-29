@@ -114,7 +114,8 @@ setInterval(run, 1000/fps)   ← fps 既定 60
 
 `0x18` の bit7（XOUT）には 2 種類の信号が流れます。`BSAVE` / `BLOAD` は PWM、
 TEXT モードの `Sio` は調歩同期シリアルで、どちらもソフトウェアによるビットバンギングです。
-`bsaveCapture()` と `sioCapture()` がそれぞれを復号してファイルに書き出します。
+`bsaveCapture()` と `sioCapture()` がそれぞれを復号してファイルに書き出し、
+`bloadPoll()` と `sioSendPoll()` が `0x1F` の bit2 へ波形を流して書き戻します。
 詳細は [docs/emulator/](docs/emulator/) を参照してください。
 
 ### 機種差分

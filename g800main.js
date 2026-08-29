@@ -976,6 +976,9 @@ var sioBytes = null;
 /* 最後にビットを受け取った時刻 (Z80 ステート) */
 var sioLast = 0;
 
+/* 取り込み中に見た書き込み間隔の最小値。0 はまだ測っていない */
+var sioMinGap = 0;
+
 /* 転送していないときに出しておく文言 */
 var sioStatusText = "";
 
@@ -995,6 +998,7 @@ function sioReset() {
 	sioData = 0;
 	sioCount = 0;
 	sioBytes = null;
+	sioMinGap = 0;
 }
 
 /*
@@ -1017,7 +1021,18 @@ function sioCapture(x) {
 		return;
 
 	var bit = (x & 0x80) ? 0: 1;
-	sioLast = z80states();
+
+	/*
+		ビット周期を実測しておく (送出側で使う)
+
+		1 ビットにつき 1 回書かれるので、書き込みの最小間隔がビット周期になる。
+		文字と文字の間は 1 ビット以上空くため最小値だけを見ればよい。
+	*/
+	var now = z80states();
+	var gap = now - sioLast;
+	if(sioState != 0 && gap > 0 && (sioMinGap == 0 || gap < sioMinGap))
+		sioMinGap = gap;
+	sioLast = now;
 
 	switch(sioState) {
 	case 0:	/* 未同期。アイドル(1) を見つけるまで待つ */
@@ -1070,11 +1085,175 @@ function sioPoll() {
 */
 function sioFinish() {
 	var bytes = new Uint8Array(sioBytes);
+
+	/* 実測できていれば送出側のビット周期を合わせる */
+	if(sioMinGap > 0)
+		sioBitStates = sioMinGap;
+
 	sioReset();
 
 	downloadBinary(bytes, "text.txt", "text/plain");
 	sioStatusText = "SIO 受信完了 " + bytes.length + " byte";
 	bsaveStatusText = "";
+}
+
+/*
+	TEXT モードの SIO へ送り込む (Load)
+
+	受信側の ROM はポート 0x1F の bit2 を見ている。極性は出力と同じく反転で、
+	ビットが 0 のときアイドル(論理 1)、1 のときスタートビット(論理 0) になる。
+
+	信号の詳細は docs/analysis/text-sio.md を参照。
+*/
+
+/* XIN のビット。BLOAD と同じピン */
+var SIO_BIT = 0x04;
+
+/*
+	1200baud のビット周期 (Z80 ステート)
+
+	実機の 8MHz なら約 842usec にあたる。TEXT の Format でボーレートを
+	変えるとこの値も変わるため、取り込みのたびに実測値で上書きしている。
+*/
+var SIO_BIT_STATES = 6733;
+var sioBitStates = SIO_BIT_STATES;
+
+/* 送出するビット列。null は送出していない */
+var sioSendBits = null;
+
+/* 受信が始まるのを待っている状態か */
+var sioSendArmed = false;
+
+/* 送出を始めた時刻と、前回ポートが読まれた時刻 */
+var sioSendStart = 0;
+var sioSendLastPoll = 0;
+
+/* 送るバイト数 (表示用) */
+var sioSendCount = 0;
+
+/* 前後に置くアイドルのビット数 */
+var SIO_LEAD_BITS = 30;
+var SIO_TAIL_BITS = 60;
+
+/*
+	バイト列を調歩同期のビット列に展開する
+
+	1 バイトはスタートビット(0)、データ 8 ビット(LSB から)、
+	ストップビット(1) の 10 ビットになる。
+*/
+function sioSendBuild(bytes) {
+	var bits = new Uint8Array(
+		SIO_LEAD_BITS + bytes.length * 10 + SIO_TAIL_BITS);
+	var n = 0;
+
+	while(n < SIO_LEAD_BITS)
+		bits[n++] = 1;
+
+	for(var i = 0; i < bytes.length; i++) {
+		bits[n++] = 0;
+		for(var k = 0; k < 8; k++)
+			bits[n++] = (bytes[i] >> k) & 1;
+		bits[n++] = 1;
+	}
+
+	while(n < bits.length)
+		bits[n++] = 1;
+
+	return bits;
+}
+
+/*
+	送出のビットを返す (in1f() から呼ぶ)
+
+	準備だけしておき、ROM がポートを細かく読み始めたら送出を開始する。
+	ROM 側のアドレスに依存せずに Load の実行を検出できる。
+*/
+function sioSendPoll() {
+	var now = z80states();
+
+	if(sioSendArmed) {
+		if(now - sioSendLastPoll < 500) {
+			/* 細かい間隔で読まれている = 受信が待っている */
+			sioSendArmed = false;
+			sioSendStart = now;
+			console.log("SIO: 送出開始\r\n");
+		}
+		sioSendLastPoll = now;
+		return 0;
+	}
+	sioSendLastPoll = now;
+
+	if(sioSendBits == null)
+		return 0;
+
+	var idx = Math.floor((now - sioSendStart) / sioBitStates);
+	if(idx >= sioSendBits.length) {
+		sioSendBits = null;
+		sioStatusText = "SIO 送出完了 " + sioSendCount + " byte";
+		bsaveStatusText = "";
+		console.log("SIO: 送出完了\r\n");
+		return 0;
+	}
+
+	/* 出力と同じく論理値の反転。アイドル(1) のときビットは 0 */
+	return sioSendBits[idx] ? 0: SIO_BIT;
+}
+
+/*
+	ファイルを読み込んで送出の準備をする
+
+	読み込んだあとに TEXT の Sio で Load を実行すると送出が始まる。
+*/
+function sioLoadFile() {
+	var input = document.createElement('input');
+	input.type = 'file';
+
+	input.onchange = function(e) {
+		var reader = new FileReader();
+		reader.onload = function(ev) {
+			var bytes = Array.prototype.slice.call(
+				new Uint8Array(ev.target.result));
+
+			if(bytes.length == 0) {
+				alert("ファイルが空です");
+				return;
+			}
+
+			/*
+				終端がなければ付ける
+
+				受信側は終端コードを見るまで待ち続ける。Format の既定値は
+				0x1A なのでそれを補う。設定を変えている場合は合わない。
+			*/
+			if(bytes[bytes.length - 1] != 0x1a) {
+				bytes.push(0x1a);
+				console.log("SIO: 終端 0x1A を補いました\r\n");
+			}
+
+			sioSendBits = sioSendBuild(bytes);
+			sioSendCount = bytes.length;
+			sioSendArmed = true;
+			sioStatusText = "SIO 送出待ち " + bytes.length + " byte";
+
+			var sec = sioSendBits.length * sioBitStates / clocks;
+			console.log(
+				"SIO: 準備完了 " + bytes.length + " byte" +
+				" ビット周期 " + sioBitStates + " ステート" +
+				" 所要 " + sec.toFixed(1) + " 秒\r\n");
+			alert("読み込みました。TEXT の Sio で Load を実行してください。");
+		};
+		reader.readAsArrayBuffer(e.target.files[0]);
+	};
+
+	input.click();
+}
+
+/*
+	送出を取りやめる
+*/
+function sioSendReset() {
+	sioSendBits = null;
+	sioSendArmed = false;
 }
 
 /*
@@ -1646,7 +1825,7 @@ function bloadLoadFile() {
 
 function in1f() {
 	/* bit1 は TEXT モードの SIO の送信許可 (docs/analysis/text-sio.md) */
-	return keyBreak | bloadPoll() | (sioEnable ? 0x02: 0x00);
+	return keyBreak | bloadPoll() | sioSendPoll() | (sioEnable ? 0x02: 0x00);
 }
 function out1f(x) {
 }

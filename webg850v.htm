@@ -135,7 +135,8 @@
                               <input type="checkbox" id="SIOCAP" name="SIOCAP" onclick="sioEnable=this.checked; sioReset();">
                               <label class="SMALL" for="SIOCAP">SIO CAPTURE</label>
                         </td>
-                        <td align="center" colspan="4" class="SMALL">TEXT → Sio → Save<br>→ text.txt へ保存</td>
+                        <td align="center" colspan="2"><button class="SMALL" value="GKEY_NONE" onclick="sioLoadFile()">LOAD TXT</button></td>
+                        <td align="center" colspan="2" class="SMALL">Sio → Save → text.txt<br>LOAD TXT → Sio → Load</td>
                     </tr>
                     <tr bgcolor="#55DD55">
                         <td align="center" colspan="6" class="SMALL" id="BSAVESTAT">&nbsp;</td>
