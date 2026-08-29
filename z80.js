@@ -2358,7 +2358,7 @@ function z80execute(s,bken,bkpt) {
 
  do {
   if (z80break == false) {
-    if ((bken == true) && (z80pc == bkpt) && (fetch == false)) {
+    if ((bken == true) && (z80pc == bkpt) && (bkfetch == false)) {
       z80break = true;
       z80restStates = 0;
       console.log("\n*** PC BREAK ***\n")

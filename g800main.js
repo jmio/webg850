@@ -451,7 +451,14 @@ var siocapture = false;
 
 /* ブレークイネーブル */
 var bken = false;
-var fetch = false;
+
+/*
+	メモリ READ でもブレークするかどうか
+
+	もとは fetch という名前だったが、グローバルの fetch を上書きして
+	ページ内から Fetch API が使えなくなっていたため改名した。
+*/
+var bkfetch = false;
 
 /* 累積 Z80 ステート数 (フレームをまたいで単調増加する) */
 var z80totalStates = 0;
@@ -793,7 +800,7 @@ var gkeyToAsciiLower = new Uint8Array([
 */
 function z80read8(address) {
 	if (z80break == false) {
-		if ((bken == true) && (address == bkpt) && (fetch == true)) {
+		if ((bken == true) && (address == bkpt) && (bkfetch == true)) {
 			z80break = true;
 			z80restStates = 0;
 			console.log("\n*** FETCH BREAK ***\n")
@@ -1005,6 +1012,7 @@ function bsaveReset() {
 	bsaveSegs = new Array();
 	bsaveMarks = 0;
 	bsaveLevel = 0;
+	bsaveTotal2 = 0;
 }
 
 /*
@@ -1042,6 +1050,15 @@ function bsaveCapture(x) {
 		if(bsaveBits.length > 0) {
 			bsaveSegs.push(bsaveBits);
 			bsaveBits = new Array();
+		}
+
+		/* PWM1 が閉じた時点で復号し、PWM2 のビット数を求めておく */
+		if(bsaveSegs.length == 1 && bsaveTotal2 == 0) {
+			var h = bsaveDecode(bsaveSegs[0]);
+			if(h != null) {
+				var sz = h.data[0x12] | (h.data[0x13] << 8);
+				bsaveTotal2 = 25888 + 1 + (sz + 2) * 9 + 1;
+			}
 		}
 		bsaveMarks++;
 
@@ -1098,6 +1115,74 @@ function bsaveDecode(bits) {
 }
 
 /*
+	進行状況の表示
+
+	1 回の転送に 20 秒以上かかるため、どこまで進んでいるかを画面に出す。
+	PWM1 のビット数はヘッダ 48 バイト固定なので常に 10532 ビット。
+	PWM2 のビット数は PWM1 を復号してメインデータのサイズが分かれば決まる。
+*/
+var BSAVE_BITS1 = 10532;
+
+/* PWM2 のビット数 (PWM1 を復号するまでは 0) */
+var bsaveTotal2 = 0;
+
+/* 転送していないときに出しておく文言 */
+var bsaveStatusText = "";
+
+/*
+	進行状況を画面に反映する (run() から 1 フレームに 1 回呼ぶ)
+*/
+function bsaveProgress() {
+	var e = document.getElementById("BSAVESTAT");
+	if(e == null)
+		return;
+
+	var text = bsaveStatusText;
+
+	if(bloadEdges != null && !bloadArmed) {
+		text = "BLOAD 送出中 " +
+			Math.floor(bloadIndex * 100 / bloadEdges.length) + "%";
+	} else if(bsaveMarks > 0) {
+		var block = (bsaveSegs.length == 0 ? 1: 2);
+		var total = (block == 1 ? BSAVE_BITS1: bsaveTotal2);
+		var pct = (total > 0 ? Math.floor(bsaveBits.length * 100 / total): 0);
+
+		if(pct > 99)
+			pct = 99;
+		text = "BSAVE 受信中 " + block + "/2 " + pct + "%";
+	}
+
+	if(e.innerHTML != text)
+		e.innerHTML = text;
+}
+
+/*
+	保存するファイル名を得る
+
+	BSAVE "名前" と書くと、その名前がヘッダの 0x01-0x10 に
+	左詰め・空白埋めで入るので、それに .bin を付けたものを使う。
+	引数の無い BSAVE のときは bsave.bin になる。
+*/
+function bsaveFileName(head) {
+	var name = "";
+	var i, c;
+
+	for(i = 0x01; i <= 0x10; i++) {
+		c = head[i];
+		if(c < 0x21 || c > 0x7e)
+			continue;		/* 空白と制御文字は落とす */
+		name += String.fromCharCode(c);
+	}
+
+	/* ファイル名に使えない文字は置き換える */
+	name = name.replace(/[^A-Za-z0-9._-]/g, "_");
+
+	if(name == "")
+		name = "bsave";
+
+	return name + ".bin";
+}
+/*
 	1 回分の転送を復号してファイルに書き出す
 
 	保存する形式は PWM1 のデータ部 48 バイトをそのままヘッダとして先頭に置き、
@@ -1109,6 +1194,7 @@ function bsaveFinish() {
 	bsaveReset();
 
 	if(head == null || main == null) {
+		bsaveStatusText = "BSAVE 復号失敗";
 		console.log("BSAVE: 復号できませんでした\r\n");
 		return;
 	}
@@ -1123,7 +1209,8 @@ function bsaveFinish() {
 	var out = new Uint8Array(head.data.length + main.data.length);
 	out.set(head.data, 0);
 	out.set(main.data, head.data.length);
-	downloadBinary(out, "bsave.bin");
+	bsaveStatusText = "BSAVE 完了 " + out.length + " byte";
+	downloadBinary(out, bsaveFileName(head.data));
 }
 function out18(x) {
 	serialcapture(x);
@@ -1238,6 +1325,25 @@ var BLOAD_BIT1_US = 360;
 /* 区切りのパルスの H 期間 (usec) */
 var BLOAD_MARK_US = 26700;
 
+/*
+	PULSES の長さ (usec) とヘッダの 0 の個数
+
+	実機は PULSES1 の L が 8 秒、ヘッダの 0 が PWM1 で 10000 個、
+	PWM2 で 25848 個あるが、受信側はもっと短くても受け取れることを
+	実測で確かめたので短縮している。実測した下限は
+	PWM1 のヘッダが 1800-2000、PWM2 のヘッダが 1000-2000 で、
+	ここではその約 2 倍の余裕を取っている。
+
+	実機と同じ波形を流したいときはコメントの値に戻す。
+*/
+var BLOAD_P1_L_US = 71110;		/* 実機相当: 7111000 */
+var BLOAD_P2_L_US = 17780;		/* 実機相当: 1778000 */
+var BLOAD_P2_G1_US = 21300;
+var BLOAD_P2_G2_US = 5330;
+var BLOAD_P3_L_US = 35560;		/* 実機相当: 3556000 */
+var BLOAD_HZ1 = 4000;			/* 実機相当: 10000 */
+var BLOAD_HZ2 = 4000;			/* 実機相当: 25848 */
+
 /* BLOAD が見る入力のビット (ポート 0x1F) */
 var BLOAD_BIT = 0x04;
 
@@ -1307,21 +1413,21 @@ function bloadBuild(head, main) {
 
 	/* PULSES1 */
 	add(1, BLOAD_MARK_US);
-	add(0, 7111000);
+	add(0, BLOAD_P1_L_US);
 
-	addBits(bloadBits(head, 10000, 40));
+	addBits(bloadBits(head, BLOAD_HZ1, 40));
 
 	/* PULSES2 */
-	add(0, 1778000);
+	add(0, BLOAD_P2_L_US);
 	add(1, BLOAD_MARK_US);
-	add(0, 21300);
+	add(0, BLOAD_P2_G1_US);
 	add(1, BLOAD_MARK_US);
-	add(0, 5330);
+	add(0, BLOAD_P2_G2_US);
 
-	addBits(bloadBits(main, 25848, 20));
+	addBits(bloadBits(main, BLOAD_HZ2, 20));
 
 	/* PULSES3 */
-	add(0, 3556000);
+	add(0, BLOAD_P3_L_US);
 	add(1, BLOAD_MARK_US);
 	add(0, 1000);
 
@@ -1376,6 +1482,7 @@ function bloadPoll() {
 	if(bloadIndex >= bloadEdges.length) {
 		bloadEdges = null;
 		bloadLevel = 0;
+		bsaveStatusText = "BLOAD 送出完了";
 		console.log("BLOAD: 送出完了\r\n");
 		return 0;
 	}
@@ -3970,7 +4077,8 @@ function run() {
 	/* ブレークアドレス */
 	bkpt = parseInt(document.getElementById('TEXT_BREAK').value, 16);
 	bken  = document.getElementById('BKEN').checked;
-	fetch = document.getElementById('FETCH').checked;
+	bkfetch = document.getElementById('FETCH').checked;
+	bsaveProgress();
 	for(k = 0; k < fpsN; k++) {
 		/* プログラムを実行する */
 		z80totalStates += clocks / (fps * fpsN);
