@@ -26,6 +26,7 @@ PC-G850 の内部解析と、エミュレータへの実装のドキュメント
 | [analysis/bsave-signal-format.md](analysis/bsave-signal-format.md) | `BSAVE` / `BLOAD` が 11pin へ流す PWM 信号の形式。外部資料と実測の突き合わせ |
 | [analysis/io-ports.md](analysis/io-ports.md) | `10H`-`1FH` と `60H`-`74H` の I/O ポート一覧 |
 | [analysis/11pin-uart.md](analysis/11pin-uart.md) | 11pin インターフェースと UART のレジスタ、初期化手順 |
+| [analysis/text-sio.md](analysis/text-sio.md) | TEXT モードの `Sio` の `Save` / `Load`。UART ではなく調歩同期のビットバンギング |
 
 ### emulator/
 
