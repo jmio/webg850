@@ -5,7 +5,12 @@
     <title>WebG850</title>
     <style type="text/css">
         textarea.HEXINPUT {
+            /* 列幅を押し広げないよう幅を固定する */
+            width: 56px;
             height: 20px;
+            box-sizing: border-box;
+            resize: none;
+            vertical-align: middle;
         }
         .SMALL {
             font-size: xx-small;
@@ -16,13 +21,37 @@
         li {
         	text-decoration: none;
         }
+        /* 画面全体を固定幅のひとかたまりとして扱う。
+           ウィンドウ幅で要素が散らばらないよう space-around はやめ、
+           幅は内容ぴったり (max-content) に固定する。
+           狭いウィンドウでは fitDevice() が全体を縮小する。 */
+        #deviceWrap {
+            overflow: hidden;
+        }
+        #device {
+            width: max-content;
+            margin: 0;
+            transform-origin: top left;
+        }
         .main1 {
-        	display: flex;
-        	justify-content: space-around;
+            display: flex;
+            justify-content: flex-start;
+            align-items: flex-start;
+            gap: 8px;
         }
         .main2 {
-        	display: flex;
-        	justify-content: space-around;
+            display: flex;
+            justify-content: flex-start;
+            align-items: flex-start;
+            gap: 8px;
+            margin-top: 8px;
+        }
+        /* デバッグ窓は縮小の対象にせず、ウィンドウ幅に合わせる */
+        #TEXT_CONSOLE {
+            width: 100%;
+            max-width: 100%;
+            box-sizing: border-box;
+            margin-top: 8px;
         }
         table.KEYBOARD {
             border: solid 1px #000;
@@ -41,6 +70,8 @@
     </style>
 </head>
 <body>
+    <div id="deviceWrap">
+    <div id="device">
     <div class="main1">
             <section class="LCD">
                 <script type="text/javascript" src="./mdZ80.js"></script>
@@ -97,7 +128,7 @@
                               <label class="SMALL" for="BSAVECAP">BSAVE CAPTURE</label>
                         </td>
                         <td align="center" colspan="2"><button class="SMALL" value="GKEY_NONE" onclick="bloadLoadFile()">LOAD BIN</button></td>
-                        <td align="center" colspan="2" class="SMALL">BSAVE を bsave.bin へ保存 / LOAD BIN の後に BLOAD で書き戻し</td>
+                        <td align="center" colspan="2" class="SMALL">BSAVE → bsave.bin<br>LOAD BIN → BLOAD</td>
                     </tr>
                 </table>
                 DISASM START:0x<textarea id="TEXT_START" cols="6" class="HEXINPUT">100</textarea>
@@ -193,6 +224,41 @@
                 </table>
             </section>
     </div>
+    </div>
+    </div>
+
     <textarea id="TEXT_CONSOLE" cols="100" rows="8" style="display: none" spellcheck="false"></textarea>
+    <script type="text/javascript">
+        /*
+        	画面全体をひとかたまりとして扱い、ウィンドウが狭いときだけ縮小する
+
+        	transform はレイアウトに影響しないため、縮小した分だけ
+        	親の高さを詰めないと下に空白が残る。
+        	左右は translateX で中央に寄せる (margin:auto は要素が
+        	ウィンドウより広いときに効かないため)。
+        */
+        function fitDevice() {
+            var wrap = document.getElementById("deviceWrap");
+            var dev = document.getElementById("device");
+
+            dev.style.transform = "none";
+            wrap.style.height = "";
+
+            var w = dev.offsetWidth;
+            var h = dev.offsetHeight;
+            if(w <= 0)
+                return;
+
+            var avail = document.documentElement.clientWidth - 16;
+            var scale = Math.min(1, avail / w);
+            var left = Math.max(0, (avail - w * scale) / 2);
+
+            dev.style.transform = "translateX(" + left + "px) scale(" + scale + ")";
+            wrap.style.height = Math.ceil(h * scale) + "px";
+        }
+        window.addEventListener("resize", fitDevice, false);
+        window.addEventListener("load", fitDevice, false);
+        fitDevice();
+    </script>
 </body>
 </html>
