@@ -1160,10 +1160,10 @@ function bsaveProgress() {
 	保存するファイル名を得る
 
 	BSAVE "名前" と書くと、その名前がヘッダの 0x01-0x10 に
-	左詰め・空白埋めで入るので、それに .bin を付けたものを使う。
-	引数の無い BSAVE のときは bsave.bin になる。
+	左詰め・空白埋めで入るので、それを使う。
+	引数の無い BSAVE のときは bsave になる。拡張子は ext で渡す。
 */
-function bsaveFileName(head) {
+function bsaveFileName(head, ext) {
 	var name = "";
 	var i, c;
 
@@ -1180,7 +1180,7 @@ function bsaveFileName(head) {
 	if(name == "")
 		name = "bsave";
 
-	return name + ".bin";
+	return name + ext;
 }
 /*
 	1 回分の転送を復号してファイルに書き出す
@@ -1206,11 +1206,30 @@ function bsaveFinish() {
 		" parity=" + (head.parity == head.ones ? "OK": "NG") +
 		"/" + (main.parity == main.ones ? "OK": "NG") + "\r\n");
 
+	/*
+		信号形式 (.bin) はどのモードでも必ず保存する。
+		ヘッダ 48 バイトとメインデータがあれば送出波形を作り直せるので、
+		将来 Arduino や M5Stack から実機へ再生するときにこれを使う。
+	*/
 	var out = new Uint8Array(head.data.length + main.data.length);
 	out.set(head.data, 0);
 	out.set(main.data, head.data.length);
+	downloadBinary(out, bsaveFileName(head.data, ".bin"));
+
+	if(head.data[0] == 0x01) {
+		/*
+			バイナリ (BSAVE M) はメモリイメージなので Intel HEX も出す。
+			アドレスが記録され、既存の LOAD IHX でそのまま戻せる。
+		*/
+		var addr = head.data[0x14] | (head.data[0x15] << 8);
+
+		downloadBinary(bytestoihx(main.data, addr),
+			bsaveFileName(head.data, ".ihx"), "text/plain");
+		bsaveStatusText = "BSAVE 完了 " + main.data.length + " byte (bin + ihx)";
+		return;
+	}
+
 	bsaveStatusText = "BSAVE 完了 " + out.length + " byte";
-	downloadBinary(out, bsaveFileName(head.data));
 }
 function out18(x) {
 	serialcapture(x);
@@ -4468,6 +4487,46 @@ function pad00(padstr,s)
 	return outs;
 }
 
+/*
+	バイト列を Intel HEX に変換する
+
+	memtoihx() はメモリから読み出す前提で、末尾を 16 バイト単位に切り上げる。
+	こちらは配列の長さちょうどを出力するので別の関数にしてある。
+*/
+function bytestoihx(bytes, start) {
+	var total = "";
+	var adr, sum, outstr, len, i;
+
+	for(adr = 0; adr < bytes.length; adr += 16) {
+		len = bytes.length - adr;
+		if(len > 16)
+			len = 16;
+
+		outstr = ":";
+		sum = len;
+		outstr += pad00("00", len.toString(16).toUpperCase());
+
+		sum += (((start + adr) & 0xff00) >> 8);
+		sum += ((start + adr) & 0x00ff);
+		outstr += pad00("0000", (start + adr).toString(16).toUpperCase());
+
+		outstr += "00";			/* レコードタイプ */
+
+		for(i = 0; i < len; i++) {
+			sum += bytes[adr + i];
+			outstr += pad00("00", bytes[adr + i].toString(16).toUpperCase());
+		}
+
+		sum = (~sum + 1) & 0xff;
+		outstr += pad00("00", sum.toString(16).toUpperCase());
+		outstr += "\r\n";
+		total += outstr;
+	}
+
+	total += ":00000001FF\r\n";
+	return total;
+}
+
 function memtoihx(start,end)
 {
 	var adr,sum,outstr,totalstr ;
@@ -4533,13 +4592,16 @@ function downloadData(content, filename, mimetype) {
 }
 
 /*
-	バイナリをファイルとして書き出す
+	バイト列や文字列をファイルとして書き出す
 
 	downloadData() は内容をデバッグ窓へ出力するため、バイナリには使わない。
 */
-function downloadBinary(bytes, filename) {
+function downloadBinary(content, filename, mimetype) {
+	if(mimetype === undefined)
+		mimetype = 'application/octet-stream';
+
 	var url = (window.URL || window.webkitURL).createObjectURL(
-		new Blob([bytes], { 'type': 'application/octet-stream' }));
+		new Blob([content], { 'type': mimetype }));
 	var link = document.createElement('a');
 	link.download = filename;
 	link.href = url;
