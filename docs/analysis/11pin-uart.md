@@ -20,7 +20,7 @@ PC-G850 系の 11pin インターフェース周辺の I/O ポートについて
 | カセット互換の転送（`BSAVE` / `BLOAD` / `SAVE` / `LOAD`）| **ソフトウェアによる PWM のビットバンギング**。UART は使わない | 出力 `0x18` の bit7（XOUT）、入力 `0x1F` の bit2（XIN）|
 | RS-232C 通信 | **ハードウェア UART** | `0x60` `0x63` `0x70`-`0x74`（G850V）|
 
-PWM 側の詳細は [bsave-format.md](bsave-format.md) を参照。
+PWM 側の詳細は [bsave-signal-format.md](bsave-signal-format.md) を参照。
 
 ## ポート一覧（PC-G850V）
 

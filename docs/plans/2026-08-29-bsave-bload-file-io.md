@@ -1,7 +1,7 @@
 # 解析計画: BSAVE / BLOAD をブラウザ経由のファイル入出力に橋渡しする
 
 作成日: 2026-08-29
-状態: フェーズ 5 ほぼ完了。残りは Firefox + file:// での確認（2026-08-30 更新）
+状態: **完了**（2026-08-30）
 
 ## 目的
 
@@ -112,13 +112,13 @@
 
 ## 未確定事項
 
-外部資料（[docs/bsave-format.md](../bsave-format.md) の出典）と実測により、Q1〜Q3 は解決した。
+外部資料（[docs/analysis/bsave-signal-format.md](../analysis/bsave-signal-format.md) の出典）と実測により、Q1〜Q3 は解決した。
 
 | # | 調べること | 状況 |
 |:--|:--|:--|
 | Q1 | `BSAVE` は 11pin へどの変調方式で出力するか | **解決**: XOUT の PWM。H 期間の長短で 0/1 を表す。ポート `0x18` の **bit7 のみ**を使う |
 | Q2 | 1 ビットあたりの時間、ビット順・極性 | **解決**: エミュレータ実測で 0 = H 145usec、1 = H 360usec（実機は 162 / 406usec）|
-| Q3 | ファイル全体のフレーム構成 | **解決**: PULSES1 → PWM1 → PULSES2 → PWM2 → PULSES3。詳細は [docs/bsave-format.md](../bsave-format.md) |
+| Q3 | ファイル全体のフレーム構成 | **解決**: PULSES1 → PWM1 → PULSES2 → PWM2 → PULSES3。詳細は [docs/analysis/bsave-signal-format.md](../analysis/bsave-signal-format.md) |
 | Q4 | `BSAVE` に装置指定があり、指定によって出力先や形式が変わるか | 未確認。引数なしでも転送は始まる |
 | Q5 | `BLOAD` 側が入力を読むポート | **解決**: `0x1F` の **bit2(0x04)**。bit1 ではない |
 | Q6 | `BLOAD` が要求する入力タイミング | **解決**: 約 3usec 間隔でポーリングしており、BSAVE と同じ波形を返せば通る |
@@ -140,7 +140,7 @@
 完了条件: BASIC を操作している間の `out18` の書き込みが、値と時刻の対で取り出せる。
 
 **済**（2026-08-29）。`run` と `out18` の実行時ラップで実現。`g800main.js` は未変更。
-操作手順は [docs/debug-operation.md](../debug-operation.md) を参照。
+操作手順は [docs/emulator/debug-operation.md](../emulator/debug-operation.md) を参照。
 
 ### フェーズ 1: BSAVE の出力を観測する
 
@@ -155,7 +155,7 @@
 完了条件: 出力ビット列 → バイト列への変換規則が書き下せる状態。結果は
 `docs/` 直下の解析ドキュメントに残す。
 
-**一部済**（2026-08-29）。パルス幅と全体構造は [docs/bsave-format.md](../bsave-format.md) に記録した。
+**一部済**（2026-08-29）。パルス幅と全体構造は [docs/analysis/bsave-signal-format.md](../analysis/bsave-signal-format.md) に記録した。
 残りは PWM_DATA1 の詳細とパリティの再現（Q8）、および装置指定の確認（Q4）。
 
 ### フェーズ 2: 出力トラップとファイル書き出しの実装
@@ -172,7 +172,7 @@
 
 **済**（2026-08-29）。保存形式は PWM1 の 48 バイト + PWM2 のメインデータ。
 `10 REM UUUU` で 70 バイトのファイルを得て、パリティも照合できた。
-詳細は [docs/bsave-format.md](../bsave-format.md)。
+詳細は [docs/analysis/bsave-signal-format.md](../analysis/bsave-signal-format.md)。
 
 ### フェーズ 3: BLOAD の入力経路を調べる
 
@@ -210,8 +210,8 @@ ROM 内蔵の BASE 変換プログラム（2806 バイト）の 2 本で往復�
 後者は **BSAVE → BLOAD → BSAVE のバイト単位の照合で 2854 バイトが完全一致**し、
 フレーム境界を何百回もまたぐケースも通った。残りは以下。
 
-- **仕上げに Firefox + `file://` の従来手順で同じ往復試験を通す。** 解析中に使っていた
-  HTTP 配信では `file://` 固有の制約が隠れるため、ここを省略しない。
+- **済**（2026-08-30）Firefox + `file://` でも往復に成功。さらに、そこで得た
+  ファイルが Chromium + HTTP 配信で得たものと **2854 バイト完全一致**することを確認した。
 
 ## 触ることになるコードの見当
 

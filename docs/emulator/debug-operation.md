@@ -15,7 +15,7 @@ python tools/serve.py          # 既定 8850 番
 ブラウザが `g800main.js` をキャッシュし、コードを直しても古いものを掘み続ける。
 ページを再読み込みしても直らない（スクリプトの URL が同じのでキャッシュが効く）ので、
 新しい関数が `is not defined` になって初めて気づくことになる。
-[../tools/serve.py](../tools/serve.py) は全レスポンスでキャッシュを禁止し、`Last-Modified` も落とす。
+[../../tools/serve.py](../../tools/serve.py) は全レスポンスでキャッシュを禁止し、`Last-Modified` も落とす。
 
 **確認済み**: この方法なら Firefox の `security.fileuri.strict_origin_policy` は不要で、
 Chromium 系ブラウザでも実機 ROM を読み込んで起動する。`file://` が必要なのは
@@ -30,7 +30,7 @@ z80pc.toString(16)  // ROM 内のアドレスになっていれば実行中
 machine           // 2 = MACHINE_G850
 ```
 
-最終的な実装は Firefox + `file://` でも動く必要がある（[../README.md](../README.md)）。
+最終的な実装は Firefox + `file://` でも動く必要がある（[../../README.md](../../README.md)）。
 
 ## 画面を見る
 

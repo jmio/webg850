@@ -98,7 +98,7 @@ PC-G850V では UART のレジスタが `6CH`-`6FH` から移動している。
 `67H` は未対応なので切り替えにも追従しない。
 
 実際に `BSAVE` の出力パルス幅を測ると、実機の実測値（外部資料）の **8/9** になっており、
-この差と整合する。詳細は [bsave-format.md](bsave-format.md) を参照。
+この差と整合する。詳細は [bsave-signal-format.md](bsave-signal-format.md) を参照。
 
 ## アイドル時（BASIC のコマンド待ち）の I/O 基準値
 
