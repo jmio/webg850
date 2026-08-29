@@ -127,8 +127,9 @@ run = function() { frame++; _run(); };
 
 - 未実装のポートは **read が常に `0x78`、write は無視**される（`z80inport` の最後の `return 0x78`）。
   ROM が未実装ポートを読んで判断している場合、実機と違う分岐に入る可能性がある。
-- 11pin インターフェース周りは実装が薄い。`in18()` は常に 0、
-  `in1f()` は `keyBreak | (siocapture ? 0x02 : 0)` で `siocapture` は常に `false`。
+- 11pin インターフェース周りは実装が薄い。`in18()` は常に 0。
+  `in1f()` が返すのは BREAK キー（bit7）、`BLOAD` の送出（bit2）、
+  TEXT の `Sio` の送信許可（bit1）だけ。
 
 ### アイドル時（BASIC のコマンド待ち）の I/O 基準値
 

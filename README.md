@@ -40,6 +40,7 @@ firefox_localfile.txt を参照して設定してください。
 | LOAD IHX ボタン| intel hex 形式のプログラムをロードできます。|
 | BSAVE CAPTURE チェックボックス| ここにチェックがあるとき、BASIC の BSAVE で 11pin インターフェースへ出力される内容を復号し、ファイルに保存します。ファイル名は BSAVE に名前を付けなければ bsave.bin、BSAVE "MYPROG" のように名前を付ければ MYPROG.bin になります。実機と同じ速さで転送するため完了までに 20 秒以上かかりますが、進行状況が下に表示されます。|
 | LOAD BIN ボタン| BSAVE で保存したファイルを読み込みます。読み込んだあとに BASIC で BLOAD を実行すると、その内容がポケコン側へ書き戻されます。|
+| SIO CAPTURE チェックボックス| ここにチェックがあるとき、TEXT モードの Sio の Save で 11pin インターフェースへ出力されるテキストを復号し、text.txt というファイルに保存します。チェックを入れていないとポケコン側が送信を始めないので、Save の前にチェックしてください。|
 
 BSAVE / BLOAD の仕組みと保存されるファイルの形式は [docs/emulator/](docs/emulator/) にあります。
 

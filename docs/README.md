@@ -35,6 +35,7 @@ PC-G850 の内部解析と、エミュレータへの実装のドキュメント
 | [emulator/bsave-bload.md](emulator/bsave-bload.md) | `BSAVE` / `BLOAD` エミュレーションの仕組みと使い方 |
 | [emulator/bsave-file-format.md](emulator/bsave-file-format.md) | 保存されるファイルの形式。これだけ読めば別のツールで読み書きできる |
 | [emulator/debug-operation.md](emulator/debug-operation.md) | エミュレータを動かして解析するときの手順と勘所 |
+| [emulator/text-sio-capture.md](emulator/text-sio-capture.md) | TEXT モードの `Sio` の `Save` を `text.txt` として取り出す仕組み |
 | [emulator/screen-layout.md](emulator/screen-layout.md) | 画面レイアウトの固定と自動縮小の仕組み |
 
 ## 書くときの注意

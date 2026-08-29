@@ -446,8 +446,13 @@ var waveOn;
 /* ブザー出力OFFの値 */
 var waveOff;
 
-/* SIO をテキスト窓にキャプチャするかどうか (true 時、RUN の開始が若干遅くなる) */
-var siocapture = false;
+/*
+	TEXT モードの SIO を取り込むかどうか
+
+	これが true のときポート 0x1F の bit1 を 1 にして返す。
+	ROM はこのビットが立つまで送信を始めないので、事実上の送信許可になる。
+*/
+var sioEnable = false;
 
 /* ブレークイネーブル */
 var bken = false;
@@ -958,41 +963,119 @@ function in18() {
 	return 0;
 }
 
-var out18state = 0;
-var out18data  = 0;
-var out18ctr   = 0;
-function serialcapture(x)
-{
-	if (x & 0x02) {
-		var data = (x & 0x80) ? 0 : 1;
-		switch(out18state){
-			case 0:
-				if (data == 1) out18state = 1; // STOP BIT
-				break;
-			case 1:
-				if (data == 0) {
-					out18state = 2; // START BIT
-					out18data = 0;
-					out18ctr  = 0;
-				}
-				break;
-			case 2:
-				out18data = (out18data >> 1) + (data << 7);
-				out18ctr = out18ctr + 1;
-				if (out18ctr == 8) {
-					if (out18data >= 0x20) {
-						console.log(String.fromCharCode(out18data));
-					} else if (out18data == 0x0a) {
-						console.log("\n");
-					}
-					out18state = 0;
-				}
+/* フレーム復号の状態 0:未同期 1:アイドル待ち 2:データ受信中 */
+var sioState = 0;
 
-		}
-	}
+/* 組み立て中のバイトと、受け取ったビット数 */
+var sioData = 0;
+var sioCount = 0;
 
+/* 受信したバイト列。null は「まだ 1 バイトも来ていない」 */
+var sioBytes = null;
+
+/* 最後にビットを受け取った時刻 (Z80 ステート) */
+var sioLast = 0;
+
+/* 転送していないときに出しておく文言 */
+var sioStatusText = "";
+
+/*
+	無通信がこれだけ続いたら 1 回の転送が終わったとみなす (usec)
+
+	1200baud のビット周期が約 842usec なので、その 20 ビット分にあたる。
+	文字と文字の間がこれ以上空くことはない。
+*/
+var SIO_IDLE_US = 20000;
+
+/*
+	SIO の取り込みを初期化する
+*/
+function sioReset() {
+	sioState = 0;
+	sioData = 0;
+	sioCount = 0;
+	sioBytes = null;
 }
 
+/*
+	TEXT モードの SIO 出力(XOUT)を取り込む
+
+	BSAVE の PWM とは違い、こちらは調歩同期のシリアルである。
+	ROM は 1 ビットにつき 1 回ポート 0x18 に書くので、bit1 が立っている
+	書き込みをそのままビットとして拾えばよい。bit7 は論理値の反転で、
+	bit7 が 1 のときデータは 0 になる。
+
+	信号の詳細は docs/analysis/text-sio.md を参照。
+
+	画面には触らずバイト列を貯めるだけにしてある。1 文字ごとにテキスト窓へ
+	追記すると、文字数の 2 乗に比例して重くなるため。
+*/
+function sioCapture(x) {
+	if(!sioEnable)
+		return;
+	if((x & 0x02) == 0)
+		return;
+
+	var bit = (x & 0x80) ? 0: 1;
+	sioLast = z80states();
+
+	switch(sioState) {
+	case 0:	/* 未同期。アイドル(1) を見つけるまで待つ */
+		if(bit == 1)
+			sioState = 1;
+		break;
+
+	case 1:	/* アイドル中。0 に落ちたらスタートビット */
+		if(bit == 0) {
+			sioState = 2;
+			sioData = 0;
+			sioCount = 0;
+		}
+		break;
+
+	case 2:	/* データ 8 ビットを LSB から詰める */
+		sioData = (sioData >> 1) | (bit << 7);
+		if(++sioCount < 8)
+			break;
+
+		if(sioBytes == null)
+			sioBytes = new Array();
+		sioBytes.push(sioData);
+		sioState = 0;
+		break;
+	}
+}
+
+/*
+	無通信が続いたら 1 回の転送を閉じる (run() から 1 フレームに 1 回呼ぶ)
+
+	送り終わったことは信号からは分からないので、時間で区切るしかない。
+*/
+function sioPoll() {
+	if(sioBytes == null || sioBytes.length == 0)
+		return;
+
+	var us = (z80states() - sioLast) / (clocks / 1000000);
+	if(us < SIO_IDLE_US)
+		return;
+
+	sioFinish();
+}
+
+/*
+	受信したバイト列をファイルとして書き出す
+
+	改行コードと終端コードは TEXT の Format 画面で変えられるので、
+	受け取ったバイト列には手を加えずそのまま保存する。
+*/
+function sioFinish() {
+	var bytes = new Uint8Array(sioBytes);
+	sioReset();
+
+	downloadBinary(bytes, "text.txt", "text/plain");
+	sioStatusText = "SIO 受信完了 " + bytes.length + " byte";
+	bsaveStatusText = "";
+}
 
 /*
 	現在の累積 Z80 ステート数を得る
@@ -1131,13 +1214,23 @@ var bsaveStatusText = "";
 
 /*
 	進行状況を画面に反映する (run() から 1 フレームに 1 回呼ぶ)
+
+	表示欄は 1 つしかないので、動いている転送のものを出す。
+	同時に 2 つ動くことはない。
 */
-function bsaveProgress() {
+function transferProgress() {
+	sioPoll();
+
 	var e = document.getElementById("BSAVESTAT");
 	if(e == null)
 		return;
 
 	var text = bsaveStatusText;
+
+	if(sioBytes != null && sioBytes.length > 0)
+		text = "SIO 受信中 " + sioBytes.length + " byte";
+	else if(sioStatusText != "")
+		text = sioStatusText;
 
 	if(bloadEdges != null && !bloadArmed) {
 		text = "BLOAD 送出中 " +
@@ -1189,6 +1282,8 @@ function bsaveFileName(head, ext) {
 	続けて PWM2 のメインデータを並べたもの。パリティは送出時に計算し直すので保存しない。
 */
 function bsaveFinish() {
+	sioStatusText = "";
+
 	var head = (bsaveSegs.length > 0 ? bsaveDecode(bsaveSegs[0]): null);
 	var main = (bsaveSegs.length > 1 ? bsaveDecode(bsaveSegs[1]): null);
 	bsaveReset();
@@ -1232,7 +1327,7 @@ function bsaveFinish() {
 	bsaveStatusText = "BSAVE 完了 " + out.length + " byte";
 }
 function out18(x) {
-	serialcapture(x);
+	sioCapture(x);
 	bsaveCapture(x);
 
 	if(wave == null)
@@ -1550,7 +1645,8 @@ function bloadLoadFile() {
 }
 
 function in1f() {
-	return keyBreak | bloadPoll() | (siocapture == true ? 0x02 : 0x00) ; // for Serial Capture
+	/* bit1 は TEXT モードの SIO の送信許可 (docs/analysis/text-sio.md) */
+	return keyBreak | bloadPoll() | (sioEnable ? 0x02: 0x00);
 }
 function out1f(x) {
 }
@@ -4107,7 +4203,7 @@ function run() {
 	bkpt = parseInt(document.getElementById('TEXT_BREAK').value, 16);
 	bken  = document.getElementById('BKEN').checked;
 	bkfetch = document.getElementById('FETCH').checked;
-	bsaveProgress();
+	transferProgress();
 	for(k = 0; k < fpsN; k++) {
 		/* プログラムを実行する */
 		z80totalStates += clocks / (fps * fpsN);

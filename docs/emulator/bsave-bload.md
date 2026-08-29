@@ -165,7 +165,7 @@ BSAVE: mode=02 size=2806(申告 2806) parity=OK/OK
 
 ```js
 function in1f() {
-	return keyBreak | bloadPoll() | (siocapture == true ? 0x02 : 0x00);
+	return keyBreak | bloadPoll() | (sioEnable ? 0x02: 0x00);
 }
 ```
 
@@ -302,8 +302,8 @@ PULSES の長い L は 1/100 のままとした。
   その設定に関係なく入力が読める。`BLOAD` が実際に `OUT 15H,90H` を出していることは
   確認済み。忠実にするならここをゲートすべきだが、どのビットが有効化なのかが
   分かっていないため実装していない。
-- **`siocapture` とは別系統。** 既存の `siocapture` はポート `0x1F` の bit1 を使う
-  別の仕組みで、どこからも有効にされておらず機能していない。混同しないこと。
+- **TEXT モードの `Sio` とは別系統。** あちらは同じ `0x18` bit7 を使うが変調が違い、
+  `0x1F` では bit1 を使う（[text-sio-capture.md](text-sio-capture.md)）。混同しないこと。
 - `BSAVE "名前"` の名前はファイル名に使うだけで、`BLOAD` 側で名前を照合していない。
 ## 実装した箇所
 
