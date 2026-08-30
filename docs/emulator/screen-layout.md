@@ -72,6 +72,15 @@ wrap.style.height = Math.ceil(dev.offsetHeight * scale) + "px";
 | 「BSAVE → bsave.bin」「LOAD BIN → BLOAD」の 2 行に短縮 | 1018px |
 | さらに 16 進入力欄の幅を固定 | 1014px |
 
+### 字が変わるボタンにも幅を指定する
+
+`BLOAD` の読み込み元を示すボタン（`BLOAD_BTN`）は、実機とやり取りするかどうかで
+`ファイルから LOAD` / `実機から LOAD` と表示が変わる。字数が変わるとセル幅が動き、
+`#device` が `width: max-content` なので全体の幅と倍率まで揺れる。`width: 92px` を
+直接指定して固定してある（どちらの字も 88px に収まる）。
+
+書き換えても `#device` が 1014px のままであることをブラウザで確認済み（2026-08-30）。
+
 ### 16 進入力欄には幅を指定する
 
 `textarea.HEXINPUT` は `cols="6"` だけでは幅がフォント依存になり、

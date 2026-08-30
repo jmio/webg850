@@ -23,6 +23,7 @@
 var realioLink = null;          /* G850Link。未接続なら null */
 var realioBusy = false;         /* 転送中は多重実行を防ぐ */
 var realioPendingBin = null;    /* BSAVE で作られ、まだ送出していない .bin */
+var realioBloadHint = false;    /* 「エミュレータで BLOAD を…」を出しているか */
 
 /* ---- 画面 ------------------------------------------------------------ */
 
@@ -81,8 +82,18 @@ function realioSetButtons() {
 	}
 
 	realioEl("REALIO_SEND").disabled = !on || realioBusy || realioPendingBin == null;
-	realioEl("REALIO_RECV").disabled = !on || realioBusy || !use;
 	realioEl("REALIO_ABORT").disabled = !realioBusy;
+
+	/*
+		BLOAD の読み込み元がどちらなのかをボタンの字で示す。
+
+		取り込み専用のボタンは置いていない。BLOAD の待機は g800main.js が
+		検出して自動で始まるので、このボタンは自動で始まらなかったときと、
+		先に用意しておきたいときのための入口。
+	*/
+	var btn = realioEl("BLOAD_BTN");
+	if (btn)
+		btn.textContent = use ? "実機から LOAD" : "ファイルから LOAD";
 }
 
 /* ---- 接続 ------------------------------------------------------------ */
@@ -224,6 +235,7 @@ async function realioReceive() {
 		realioProgress(100, "完了");
 
 		var info = bloadSetBytes(r.bin);
+		realioBloadHint = true;
 		realioStatus("取り込み完了 " + r.bin.length + " バイト" +
 		             "（本体 " + info.size + "）/ " +
 		             (r.ms / 1000).toFixed(1) + " 秒。" +
@@ -234,6 +246,51 @@ async function realioReceive() {
 	}
 	realioBusy = false;
 	realioSetButtons();
+}
+
+/*
+	g800main.js の bloadLoadFile() と bloadDemand() から呼ばれる。
+
+	true を返すとファイル選択のダイアログを開かない。実機の BSAVE を
+	待ち受けて取り込み、そのまま BLOAD の待ち受けに仕込む。BSAVE 側
+	(realioBsaveSink) と揃えてあり、チェックが入っているのにファイル選択の
+	ダイアログが出る、という食い違いを起こさないため。
+*/
+function realioBloadSource() {
+	if (!realioUseReal())
+		return false;
+	if (!realioLink || !realioLink.isOpen()) {
+		realioStatus("実機につながっていない。ファイルから読み込みます", "ng");
+		return false;
+	}
+	if (realioBusy) {
+		/* 転送中は何も始めない。ダイアログも出さない */
+		realioStatus("転送中です。終わるか [中断] してください", "ng");
+		return true;
+	}
+
+	realioReceive();
+	return true;
+}
+
+/*
+	エミュレータの BLOAD が始まった / 終わったときに g800main.js から呼ばれる。
+
+	「エミュレータで BLOAD を実行してください」と出したまま放置しないための
+	もの。実機から取り込んだデータを渡したときだけ書き換える。ファイルから
+	読んだ BLOAD で実機の欄が動くと、何をしているのか分からなくなる。
+*/
+function realioBloadStarted() {
+	if (!realioBloadHint)
+		return;
+	realioStatus("エミュレータが読み込んでいます…");
+}
+
+function realioBloadDone() {
+	if (!realioBloadHint)
+		return;
+	realioBloadHint = false;
+	realioStatus("エミュレータへの書き戻しが終わりました", "ok");
 }
 
 /* ---- 中断 ------------------------------------------------------------ */

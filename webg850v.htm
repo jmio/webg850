@@ -126,11 +126,33 @@
                     </tr>
                     <tr bgcolor="#55DD55">
                         <td align="center" colspan="2">
-                              <input type="checkbox" id="BSAVECAP" name="BSAVECAP" onclick="bsaveEnable=this.checked; bsaveReset();">
-                              <label class="SMALL" for="BSAVECAP">BSAVE CAPTURE</label>
+                              <!--
+                                  BSAVE の取り込みと BLOAD の待機検出を
+                                  まとめて切る 1 つのスイッチ。どちらも
+                                  ポートを覗くだけで負荷が小さいので既定は
+                                  ON。11pin や音を直接叩く機械語プログラムで
+                                  誤検出するときだけ外す。
+                              -->
+                              <input type="checkbox" id="BSAVECAP" name="BSAVECAP" checked
+                                     onclick="bsaveEnable=this.checked; bsaveReset();">
+                              <label class="SMALL" for="BSAVECAP">BSAVE/BLOAD 自動</label>
                         </td>
-                        <td align="center" colspan="2"><button class="SMALL" value="GKEY_NONE" onclick="bloadLoadFile()">LOAD BIN</button></td>
-                        <td align="center" colspan="2" class="SMALL">BSAVE "名前" → 保存名<br>LOAD BIN → BLOAD</td>
+                        <!--
+                            BLOAD は待機を検出して自動で始まるので、これは
+                            逃げ道。ファイル選択のダイアログは利用者の操作
+                            から 5 秒以内でないとブラウザが黙って開かない
+                            ため、RUN 中のプログラムから BLOAD された場合は
+                            このボタンで読ませる。
+
+                            ラベルは realio.js が実機モードで書き換える。
+                            幅を固定してあるのは、書き換えでセル幅が動くと
+                            #device (width:max-content) が変わって
+                            fitDevice() の倍率が揺れるため。
+                        -->
+                        <td align="center" colspan="2"><button class="SMALL" id="BLOAD_BTN"
+                                style="width:92px;" value="GKEY_NONE"
+                                onclick="bloadLoadFile()">ファイルから LOAD</button></td>
+                        <td align="center" colspan="2" class="SMALL">BSAVE "名前" → 保存名<br>BLOAD → 自動で読み込み</td>
                     </tr>
                     <tr bgcolor="#55DD55">
                         <td align="center" colspan="2">
@@ -263,14 +285,17 @@
                               <input type="checkbox" id="REALIO_USE"
                                      onclick="realioSetButtons()"><label
                                      for="REALIO_USE">実機とやり取り</label><br>
-                              BSAVE → 実機 / BLOAD ← 実機
+                              BSAVE → 実機 / BLOAD ← 実機<br>BLOAD は自動で始まる
                         </td>
                     </tr>
                     <tr bgcolor="#44CC44" class="REALIOROW">
-                        <td align="center"><button class="SMALL" id="REALIO_SEND"
+                        <!--
+                            取り込みのボタンは置かない。エミュレータで BLOAD
+                            を実行すれば自動で始まり、手で始めたいときは
+                            [実機から LOAD] がある。入口を三つに増やさない。
+                        -->
+                        <td align="center" colspan="2"><button class="SMALL" id="REALIO_SEND"
                                 onclick="realioSend()">送出</button></td>
-                        <td align="center"><button class="SMALL" id="REALIO_RECV"
-                                onclick="realioReceive()">取込</button></td>
                         <td align="center"><button class="SMALL" id="REALIO_ABORT"
                                 onclick="realioAbort()">中断</button></td>
                     </tr>

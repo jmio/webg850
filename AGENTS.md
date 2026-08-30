@@ -56,6 +56,8 @@ Chrome 系は `file://` の同一オリジン制約を緩められないため�
 |:--|:--|:--|
 | [webg850v.htm](webg850v.htm) | 唯一のエントリポイント。LCD 用 canvas、画面上のキーボード、デバッグ UI をすべて定義 | 本リポジトリ |
 | [g800main.js](g800main.js) | エミュレータ本体。メモリ／I/O／LCD／キー／割り込み／デバッグ機能 | `g800.js` を分割・改変 |
+| [realio.js](realio.js) | `BSAVE` の出力先 / `BLOAD` の入力元を実機に切り替える画面まわり | 本リポジトリ |
+| [webserial.js](webserial.js) | Web Serial で Arduino と話すプロトコル層（`G850Link`）| 本リポジトリ |
 | [z80.js](z80.js) | Z80 CPU コア（命令実行） | `g800.js` を分割・改変 |
 | [mdZ80.js](mdZ80.js) | Z80 逆アセンブラ。C 版 Manbow-J Disassembler を JS へ移植 | 外部（改変あり） |
 | [hex.js](hex.js) | Intel HEX デコーダ。ZIP 内 HEX の読み込みにも対応 | 本リポジトリ寄り |
@@ -116,6 +118,15 @@ setInterval(run, 1000/fps)   ← fps 既定 60
 TEXT モードの `Sio` は調歩同期シリアルで、どちらもソフトウェアによるビットバンギングです。
 `bsaveCapture()` と `sioCapture()` がそれぞれを復号してファイルに書き出し、
 `bloadPoll()` と `sioSendPoll()` が `0x1F` の bit2 へ波形を流して書き戻します。
+
+`bloadPoll()` は **`BLOAD` が待ちに入ったことも検出します**。ROM は待つ間 `0x1F` を
+3μs ほどの間隔で読み続けるので、細かい読み出しが続いたら `bloadDemand()` を呼び、
+読み込むもの（ファイルか実機か）を決めます。画面の **[BSAVE/BLOAD 自動]** で切れます。
+`0x18` の bit7 は**ブザーと共用**なので、`BLOAD` の待機中と送出中は取り込みを止めて
+いる点に注意してください（止めないと `BEEP` の波形を `BSAVE` と取り違えます）。
+
+実機とのやり取りは [realio.js](realio.js) と [webserial.js](webserial.js) が担当し、
+相手をする Arduino のファームウェアは [arduino-11pin/](arduino-11pin/) にあります。
 詳細は [docs/emulator/](docs/emulator/) を参照してください。
 
 ### 機種差分

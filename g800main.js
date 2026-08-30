@@ -468,14 +468,47 @@ var bkfetch = false;
 /* 累積 Z80 ステート数 (フレームをまたいで単調増加する) */
 var z80totalStates = 0;
 
-/* BSAVE のキャプチャを行うかどうか */
-var bsaveEnable = false;
+/*
+	11pin の自動処理を行うかどうか (画面の [BSAVE/BLOAD 自動])
+
+	BSAVE の取り込み (bsaveCapture) と BLOAD の待機検出 (bloadDemand) の
+	両方をこれ 1 つで切る。どちらもポートを覗いているだけで、負荷は実測で
+	最悪 0.3% 程度しかない。既定で入れておき、11pin や音を直接叩く機械語
+	プログラムを走らせるときだけ外す想定。
+
+	外しても、LOAD BIN で読ませた BLOAD の送出と、実機とのやり取りは動く。
+	止まるのは「勝手に始まる」部分だけ。
+*/
+var bsaveEnable = true;
+
+/*
+	収集するビット数の上限
+
+	ポート 0x18 の bit7 は**音声出力と共用**なので (out18 の x & 0xc0)、
+	BEEP を鳴らすとその波形もここへ入ってくる。区切りのパルスが来ない
+	限り bsaveBits は伸び続けるため、上限を置いて捨てる。
+
+	正規の BSAVE で最も長くなるのは PWM2 で 25890 + (N + 2) * 9 + 1。
+	N は RAM の全域でも 32KB 弱なので 32 万ビット程度に収まる。
+*/
+var BSAVE_BITS_MAX = 400000;
 
 /* XOUT(ポート 0x18 の bit7) の直前のレベル */
 var bsaveLevel = 0;
 
 /* 立ち上がりを検出した時刻 (累積 Z80 ステート数) */
 var bsaveRise = 0;
+
+/* 直前にレベルが変わった時刻 (累積 Z80 ステート数) */
+var bsaveLastEdge = 0;
+
+/*
+	取り込みを捨てるまでの無音の長さ (秒)
+
+	BSAVE の波形は途切れないので、途中で止まったものは BSAVE ではない。
+	音を鳴らしただけで「BSAVE 受信中」が居座らないようにする。
+*/
+var BSAVE_IDLE_SEC = 2;
 
 /* 収集中のビット列 */
 var bsaveBits = new Array();
@@ -1289,14 +1322,23 @@ function bsaveCapture(x) {
 	if(!bsaveEnable)
 		return;
 
-	/* BLOAD の送出中は取り込まない (自分の流した波形を拾ってしまう) */
-	if(bloadEdges != null || bloadArmed)
+	/*
+		BLOAD の送出中と待機中は取り込まない。
+
+		送出中は自分の流した波形を拾ってしまう。待機中 (bloadDemanded) も
+		同じで、ROM は BLOAD の待ちループでポート 0x18 へ出力するため、
+		区切りのパルスと見えて「BSAVE 受信中 1/2 0%」が出てしまう。
+		待機は BREAK で抜けるまで続き、送出の直後もラッチが立ったままなので、
+		BLOAD 完了時の音もここで弾かれる。
+	*/
+	if(bloadEdges != null || bloadArmed || bloadDemanded)
 		return;
 
 	var level = (x & 0x80) ? 1: 0;
 	if(level == bsaveLevel)
 		return;
 	bsaveLevel = level;
+	bsaveLastEdge = z80states();
 
 	if(level) {
 		/* 立ち上がり。ここから H 期間が始まる */
@@ -1330,6 +1372,13 @@ function bsaveCapture(x) {
 	}
 
 	bsaveBits.push(us >= BSAVE_BIT_US ? 1: 0);
+
+	/*
+		区切りが来ないまま伸び続けている = BSAVE ではない (音など)。
+		黙って捨てる。画面に出すと音を鳴らすたびに騒がしくなる。
+	*/
+	if(bsaveBits.length > BSAVE_BITS_MAX)
+		bsaveReset();
 }
 
 /*
@@ -1403,6 +1452,15 @@ function transferProgress() {
 	var e = document.getElementById("BSAVESTAT");
 	if(e == null)
 		return;
+
+	/*
+		途中で止まった取り込みを捨てる。ポート 0x18 の bit7 は音声出力と
+		共用なので、BEEP の波形が区切りのパルスに見えて bsaveMarks が
+		立つことがある。放っておくと「BSAVE 受信中」が消えない。
+	*/
+	if((bsaveMarks > 0 || bsaveBits.length > 0) &&
+	   z80states() - bsaveLastEdge > clocks * BSAVE_IDLE_SEC)
+		bsaveReset();
 
 	var text = bsaveStatusText;
 
@@ -1622,6 +1680,25 @@ var bloadArmed = false;
 /* 前回 in1f() が読まれた時刻 */
 var bloadLastPoll = 0;
 
+/*
+	BLOAD の待機を検出して手当てを始めたか
+
+	一度の待機で bloadDemand() を一度しか呼ばないためのラッチ。
+	細かい読み出しが途切れた (BREAK で抜けた) ら解除する。
+*/
+var bloadDemanded = false;
+
+/* 細かい間隔で連続して読まれた回数 */
+var bloadTightPolls = 0;
+
+/*
+	待機とみなすまでに要る連続回数
+
+	ROM の BLOAD は 3usec ほどの間隔で読み続けるので、256 回でも 1msec に
+	満たない。短い連続で発火させないための下駄でしかない。
+*/
+var BLOAD_DEMAND_POLLS = 256;
+
 /* データ 0 と 1 の H 期間 (usec) */
 var BLOAD_BIT0_US = 145;
 var BLOAD_BIT1_US = 360;
@@ -1748,6 +1825,8 @@ function bloadReset() {
 	bloadIndex = 0;
 	bloadLevel = 0;
 	bloadArmed = false;
+	bloadDemanded = false;
+	bloadTightPolls = 0;
 }
 
 /*
@@ -1759,9 +1838,10 @@ function bloadReset() {
 */
 function bloadPoll() {
 	var now = z80states();
+	var tight = (now - bloadLastPoll < 500);
 
 	if(bloadArmed) {
-		if(now - bloadLastPoll < 500) {
+		if(tight) {
 			/* 細かい間隔で読まれている = BLOAD が待っている */
 			bloadArmed = false;
 			bloadIndex = 0;
@@ -1769,14 +1849,36 @@ function bloadPoll() {
 			for(var i = 0; i < bloadEdges.length; i++)
 				bloadEdges[i] += now;
 			console.log("BLOAD: 送出開始\r\n");
+
+			/* 実機から取り込んだ場合、実機の欄の案内を引っ込める */
+			if(typeof realioBloadStarted === "function")
+				realioBloadStarted();
 		}
 		bloadLastPoll = now;
 		return 0;
 	}
 	bloadLastPoll = now;
 
-	if(bloadEdges == null)
+	if(bloadEdges == null) {
+		/*
+			読み込んでいないのに BLOAD が待ちに入った。
+			bloadDemand() へ回し、読み込むものを決めてもらう。
+
+			見ているのは「BLOAD かどうか」ではなく「0x1F を細かく読み
+			続けるループかどうか」でしかない。機械語プログラムが 0x1F を
+			回していても同じに見えるので、連続が BLOAD_DEMAND_POLLS 回
+			続くまでは発火させない。
+		*/
+		if(!tight) {
+			bloadTightPolls = 0;
+			bloadDemanded = false;
+		} else if(bsaveEnable && !bloadDemanded &&
+		          ++bloadTightPolls >= BLOAD_DEMAND_POLLS) {
+			bloadDemanded = true;
+			bloadDemand();
+		}
 		return 0;
+	}
 
 	while(bloadIndex < bloadEdges.length && now >= bloadEdges[bloadIndex]) {
 		bloadLevel ^= 1;
@@ -1786,8 +1888,17 @@ function bloadPoll() {
 	if(bloadIndex >= bloadEdges.length) {
 		bloadEdges = null;
 		bloadLevel = 0;
+		/*
+			送出の直後はまだ ROM が細かく読んでいる。ラッチを立てたまま
+			にして、続けて bloadDemand() が走らないようにする。
+		*/
+		bloadDemanded = true;
 		bsaveStatusText = "BLOAD 送出完了";
 		console.log("BLOAD: 送出完了\r\n");
+
+		/* 実機から取り込んだ場合、実機の欄の案内を締めくくる */
+		if(typeof realioBloadDone === "function")
+			realioBloadDone();
 		return 0;
 	}
 
@@ -1830,7 +1941,53 @@ function bloadSetBytes(all) {
 	return { mode: head[0], size: main.length, declared: size };
 }
 
+/*
+	読み込んでいないのに BLOAD が始まったときの受け口
+
+	bloadPoll() から呼ばれる。ポケコンの BLOAD は BREAK するまで待ち続ける
+	ので、待ちに入ってから読み込ませても間に合う。用意ができた時点で
+	bloadArmed が立ち、次のポーリングでそのまま送出が始まる。
+
+	**ファイル選択のダイアログは黙って開かないことがある。**
+	利用者の操作から 5 秒以内 (transient activation) でないとブラウザが
+	無視する決まりで、例外も出ない。手で BLOAD [ENTER] と打った直後なら
+	開くが、RUN したプログラムの途中から BLOAD された場合は開かない。
+	そのための逃げ道として [ファイルから LOAD] ボタンを残してある。
+*/
+function bloadDemand() {
+	/* BLOAD が待っている以上、集めかけのものは BSAVE ではない */
+	bsaveReset();
+
+	console.log("BLOAD: 待機を検出 (まだ読み込んでいない)\r\n");
+
+	/* 入力元が実機なら realio.js が取り込みを始める */
+	if(typeof realioBloadSource === "function" && realioBloadSource())
+		return;
+
+	bsaveStatusText = "BLOAD 待機中 → 読み込む .bin を選んでください";
+	bloadOpenFileDialog();
+}
+
+/*
+	[ファイルから LOAD] ボタンの入口
+
+	自動で始まらなかったとき (上記の transient activation) と、
+	BLOAD を実行する前に用意しておきたいときのための手動の経路。
+	実機とやり取りする設定のときはボタンの字が [実機から LOAD] に変わる。
+*/
 function bloadLoadFile() {
+	/*
+		入力元が実機のときは realio.js が引き取る (Web Serial 経由)。
+		読み込まれていないか、実機が選ばれていなければ false が返るので
+		従来どおりファイル選択のダイアログを開く。
+	*/
+	if(typeof realioBloadSource === "function" && realioBloadSource())
+		return;
+
+	bloadOpenFileDialog();
+}
+
+function bloadOpenFileDialog() {
 	var input = document.createElement('input');
 	input.type = 'file';
 
@@ -1841,6 +1998,14 @@ function bloadLoadFile() {
 				bloadSetBytes(new Uint8Array(ev.target.result));
 			} catch(err) {
 				alert(err.message);
+				return;
+			}
+			if(bloadDemanded) {
+				/*
+					BLOAD が待っている最中なので、そのまま送出が
+					始まる。ここで alert を出すと待たせるだけになる。
+				*/
+				bsaveStatusText = "BLOAD 送出開始";
 				return;
 			}
 			alert("読み込みました。BASIC で BLOAD を実行してください。");
