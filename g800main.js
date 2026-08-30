@@ -1488,6 +1488,17 @@ function bsaveFinish() {
 	var out = new Uint8Array(head.data.length + main.data.length);
 	out.set(head.data, 0);
 	out.set(main.data, head.data.length);
+
+	/*
+		出力先が実機のときは realio.js が引き取る (Web Serial 経由)。
+		読み込まれていないか、実機が選ばれていなければ false が返るので
+		従来どおりファイルへ落ちる。
+	*/
+	if(typeof realioBsaveSink === "function" && realioBsaveSink(out, head.data)) {
+		bsaveStatusText = "BSAVE " + out.length + " byte → 実機へ";
+		return;
+	}
+
 	downloadBinary(out, bsaveFileName(head.data, ".bin"));
 
 	if(head.data[0] == 0x01) {
@@ -1789,6 +1800,36 @@ function bloadPoll() {
 	ファイルは先頭 48 バイトが PWM1 のデータ部、残りがメインデータ。
 	読み込んだあとに BASIC で BLOAD を実行すると送出が始まる。
 */
+/*
+	.bin のバイト列を BLOAD の待ち受けに仕込む
+
+	ファイルから読んだものでも、実機から Web Serial 経由で
+	取り込んだもの (realio.js) でも同じ扱いになる。
+	呼んだあとに BASIC で BLOAD を実行すると送出が始まる。
+
+	短すぎるときは例外を投げる。表示の仕方は呼び出し側で決める。
+*/
+function bloadSetBytes(all) {
+	if(all.length < 49)
+		throw new Error(".bin が短すぎます (" + all.length + " バイト)");
+
+	var head = Array.prototype.slice.call(all.subarray(0, 48));
+	var main = Array.prototype.slice.call(all.subarray(48));
+	var size = head[0x12] | (head[0x13] << 8);
+
+	bloadEdges = bloadBuild(head, main);
+	bloadIndex = 0;
+	bloadLevel = 0;
+	bloadArmed = true;
+
+	console.log(
+		"BLOAD: 準備完了 mode=" + pad00hex("00", head[0]) +
+		" size=" + main.length + "(申告 " + size + ")" +
+		" edges=" + bloadEdges.length + "\r\n");
+
+	return { mode: head[0], size: main.length, declared: size };
+}
+
 function bloadLoadFile() {
 	var input = document.createElement('input');
 	input.type = 'file';
@@ -1796,25 +1837,12 @@ function bloadLoadFile() {
 	input.onchange = function(e) {
 		var reader = new FileReader();
 		reader.onload = function(ev) {
-			var all = new Uint8Array(ev.target.result);
-			if(all.length < 49) {
-				alert("ファイルが短すぎます");
+			try {
+				bloadSetBytes(new Uint8Array(ev.target.result));
+			} catch(err) {
+				alert(err.message);
 				return;
 			}
-
-			var head = Array.prototype.slice.call(all.subarray(0, 48));
-			var main = Array.prototype.slice.call(all.subarray(48));
-			var size = head[0x12] | (head[0x13] << 8);
-
-			bloadEdges = bloadBuild(head, main);
-			bloadIndex = 0;
-			bloadLevel = 0;
-			bloadArmed = true;
-
-			console.log(
-				"BLOAD: 準備完了 mode=" + pad00hex("00", head[0]) +
-				" size=" + main.length + "(申告 " + size + ")" +
-				" edges=" + bloadEdges.length + "\r\n");
 			alert("読み込みました。BASIC で BLOAD を実行してください。");
 		};
 		reader.readAsArrayBuffer(e.target.files[0]);

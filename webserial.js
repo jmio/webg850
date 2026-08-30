@@ -394,3 +394,223 @@ G850Link.prototype.dump = async function (opts) {
 	}
 	return out;
 };
+
+/* ---- 実機の波形を取り込む (CAP) -------------------------------------- */
+
+/*
+	CAP の結果から .bin を組み立てる。
+
+	`+D <ブロック> <オフセット> <16進>` が 32 バイトごとに届く。
+	ブロック 1 が .bin のヘッダ 48 バイト、ブロック 2 が本体。
+	**どちらも末尾 2 バイトはパリティなので落とす。**
+
+	opts:
+	  timeout     取り込みの制限時間 [秒]。既定 300
+	  onState     "armed" / "begin" / "receiving" / "done"
+	  onProgress  { bits, total, pct, blk, bytes }
+
+	戻り値: { bin, blocks, marks, bits, glitch, ovf, ms }
+*/
+G850Link.prototype.capture = async function (opts) {
+	opts = opts || {};
+	var sec = opts.timeout || 300;
+
+	/* ブロック番号 -> { off, chunks[] } */
+	var blocks = {};
+	var reports = [];
+	var declared = -1;
+
+	/*
+		進捗の分母。本体サイズが分かるまでは PWM1 のぶんだけ。
+
+		  PWM1 = 10000 + 40 + 40 + 1 + (48 + 2) * 9 + 1 = 10532
+		  PWM2 = 25848 + 20 + 20 + 1 + (N  + 2) * 9 + 1
+
+		実機が出すヘッダのビット数は固定なので、この式で計算できる。
+	*/
+	var totalBits = 10532;
+
+	var self = this;
+	var rep = await this.command("CAP " + sec, {
+		timeout: (sec + 30) * 1000,
+
+		onData: function (line) {
+			var t = line.split(/\s+/);
+			if (t[0] === "D") {
+				var blk = parseInt(t[1], 10);
+				var off = parseInt(t[2], 16);
+				var hex = t[3] || "";
+				var b = blocks[blk] || (blocks[blk] = { off: 0, chunks: [], len: 0 });
+				if (off !== b.len)
+					throw new Error("CAP のオフセットが飛んだ: ブロック " + blk +
+					                " " + off + " (期待 " + b.len + ")");
+				var u = new Uint8Array(hex.length / 2);
+				for (var i = 0; i < u.length; i++)
+					u[i] = parseInt(hex.substr(i * 2, 2), 16);
+				b.chunks.push(u);
+				b.len += u.length;
+
+				/*
+					ブロック 1 が 48 バイト以上そろった時点で本体サイズが
+					分かる。PWM2 が始まる前なので、進捗の分母を
+					正しくしてから本体の受信に入れる。
+				*/
+				if (blk === 1 && declared < 0 && b.len >= 20) {
+					var head = g850Concat(b.chunks);
+					declared = head[0x12] | (head[0x13] << 8);
+					totalBits = 10532 + 25848 + 20 + 20 + 1 +
+					            (declared + 2) * 9 + 1;
+				}
+			} else if (t[0] === "R") {
+				reports.push(g850ParseKV(line.substring(2)));
+			}
+		},
+
+		onLog: function (line) {
+			if (line.indexOf("cap armed") === 0 && opts.onState)
+				opts.onState("armed");
+			else if (line.indexOf("cap begin") === 0 && opts.onState)
+				opts.onState("begin");
+		},
+
+		onProgress: function (line) {
+			if (line.indexOf("CAP waiting") === 0) {
+				if (opts.onState) opts.onState("waiting");
+				return;
+			}
+			if (line.indexOf("CAP ") !== 0)
+				return;
+			/*
+				進捗は bits を使う。bytes ではない。
+				PWM2 のヘッダ 25848 ビットを読み飛ばす 8.4 秒間は
+				1 バイトも復号されないので、bytes は 0 のまま止まって見える。
+			*/
+			var kv = g850ParseKV(line.substring(4));
+			var bits = parseInt(kv.bits, 10) || 0;
+			if (opts.onProgress)
+				opts.onProgress({
+					bits: bits,
+					total: totalBits,
+					pct: Math.min(100, Math.floor(bits * 100 / totalBits)),
+					blk: parseInt(kv.blk, 10) || 0,
+					bytes: parseInt(kv.bytes, 10) || 0
+				});
+		}
+	});
+
+	if (opts.onState)
+		opts.onState("done");
+
+	var summary = g850ParseKV(rep.done ? rep.done : "");
+	var done = {};
+	rep.data.forEach(function (l) {
+		if (l.indexOf("DONE ") === 0)
+			done = g850ParseKV(l.substring(5));
+	});
+
+	/* --- 検算 --------------------------------------------------------- */
+
+	if (!blocks[1] || !blocks[2])
+		throw new Error("ブロックが揃っていない（" +
+		                Object.keys(blocks).join(",") +
+		                "）。転送の途中から拾った可能性がある");
+
+	for (var i = 0; i < reports.length; i++) {
+		var r = reports[i];
+		if (r.parity !== r.calc)
+			throw new Error("ブロック " + (i + 1) + " のパリティが合わない: " +
+			                r.parity + " / 計算 " + r.calc);
+		if (parseInt(r.fe, 10) > 0)
+			throw new Error("ブロック " + (i + 1) + " にフレーミングエラー: fe=" + r.fe);
+	}
+	if (done.ovf && parseInt(done.ovf, 10) > 0)
+		throw new Error("エッジを取りこぼした: ovf=" + done.ovf);
+
+	/* 末尾 2 バイトのパリティを落とす */
+	var head = g850Concat(blocks[1].chunks);
+	var body = g850Concat(blocks[2].chunks);
+	if (head.length < 50 || body.length < 2)
+		throw new Error("ブロックが短すぎる: " + head.length + " / " + body.length);
+	head = head.subarray(0, head.length - 2);
+	body = body.subarray(0, body.length - 2);
+
+	if (head.length !== 48)
+		throw new Error("ヘッダが 48 バイトでない: " + head.length);
+
+	var size = head[0x12] | (head[0x13] << 8);
+	if (size !== body.length)
+		throw new Error("本体の長さが申告と違う: " + body.length +
+		                "（申告 " + size + "）");
+
+	var bin = new Uint8Array(head.length + body.length);
+	bin.set(head, 0);
+	bin.set(body, head.length);
+
+	return {
+		bin: bin,
+		marks: parseInt(done.marks, 10) || 0,
+		bits: parseInt(done.bits, 10) || 0,
+		glitch: parseInt(done.glitch, 10) || 0,
+		ovf: parseInt(done.ovf, 10) || 0,
+		ms: parseInt(done.ms, 10) || 0,
+		reports: reports
+	};
+};
+
+/* Uint8Array の配列を 1 本につなぐ */
+function g850Concat(list) {
+	var total = 0, i;
+	for (i = 0; i < list.length; i++)
+		total += list[i].length;
+	var out = new Uint8Array(total);
+	var pos = 0;
+	for (i = 0; i < list.length; i++) {
+		out.set(list[i], pos);
+		pos += list[i].length;
+	}
+	return out;
+}
+
+/* ---- .bin を実機へ送る (LOAD + PLAY) --------------------------------- */
+
+/*
+	バッファの内容を PWM 波形として実機へ送出する。
+
+	**先に実機で BLOAD を実行して待たせておくこと。**
+	実機の BLOAD は BREAK するまで待ち続けるので、待たせる側を
+	実機にしておけば取りこぼしが無い。
+
+	2854 バイトで約 17.5 秒（起動時の既定 PROFILE FAST）。
+*/
+G850Link.prototype.play = async function (opts) {
+	opts = opts || {};
+	var rep = await this.command("PLAY " + (opts.delayMs || 0), {
+		timeout: opts.timeout || 180000,
+		onProgress: function (line) {
+			/* "PLAY <済み>/<総数> <%>" */
+			var m = line.match(/^PLAY (\d+)\/(\d+)\s+(\d+)/);
+			if (m && opts.onProgress)
+				opts.onProgress({
+					done: parseInt(m[1], 10),
+					total: parseInt(m[2], 10),
+					pct: parseInt(m[3], 10)
+				});
+		}
+	});
+
+	var done = {};
+	rep.data.forEach(function (l) {
+		if (l.indexOf("DONE ") === 0)
+			done = g850ParseKV(l.substring(5));
+	});
+	if (done.status && done.status !== "ok")
+		throw new Error("送出が完了しなかった: " + done.status);
+	return { ms: parseInt(done.ms, 10) || 0, n: parseInt(done.n, 10) || 0 };
+};
+
+/* .bin を送り込んでから送出する。実機側は先に BLOAD で待たせておくこと */
+G850Link.prototype.sendBin = async function (bytes, opts) {
+	opts = opts || {};
+	await this.load(bytes, { onLog: opts.onLog });
+	return await this.play(opts);
+};
