@@ -22,7 +22,7 @@
 
 var realioLink = null;          /* G850Link。未接続なら null */
 var realioBusy = false;         /* 転送中は多重実行を防ぐ */
-var realioPendingBin = null;    /* BSAVE で作られ、まだ送出していない .bin */
+var realioPendingBin = null;    /* BSAVE で作られた .bin。送出後も持ち続ける */
 var realioBloadHint = false;    /* 「エミュレータで BLOAD を…」を出しているか */
 
 /* ---- 画面 ------------------------------------------------------------ */
@@ -188,10 +188,20 @@ async function realioSend() {
 			warn = "（波形が " + r.bad + " ビット化けた可能性あり）";
 		else if (r.under > 0)
 			warn = "（データ待ちで " + r.under + " 回止まった）";
+		/*
+			**送ったあとも預かったままにする。**
+			捨てると [送出] が押せなくなり、実機側で BLOAD を
+			し損ねたときに BSAVE からやり直しになる。20KB だと
+			BSAVE だけで 4 分かかるので、やり直しの代償が大きい。
+
+			押し間違えても、実機が BLOAD で待っていなければ
+			波形が空振りするだけで害は無い。
+		*/
 		realioStatus("送出完了 " + bin.length + " バイト / " +
 		             (r.ms / 1000).toFixed(1) + " 秒" + warn + "。" +
-		             "実機の画面右下に * が出れば成功", r.bad > 0 ? "ng" : "ok");
-		realioPendingBin = null;
+		             "実機の画面右下に * が出れば成功。" +
+		             "もう一度送るときは実機で BLOAD してから [送出]",
+		             r.bad > 0 ? "ng" : "ok");
 	} catch (e) {
 		realioProgress(null);
 		realioStatus("送出に失敗: " + e.message, "ng");

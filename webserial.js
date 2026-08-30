@@ -624,15 +624,84 @@ G850Link.prototype.sendBin = async function (bytes, opts) {
 	やめ、USB が NAK を返してこちらの write が止まる。それがそのまま流量
 	調整になるので、クレジットのやり取りは要らない。
 */
-var G850_STREAM_CHUNK = 64;
+/*
+	1 回の書き込みで送るバイト数。
 
+	**大きめにする。** ブラウザではエミュレータ本体が同じスレッドで動いて
+	おり、await のたびにイベントループを回すことになる。小分けにすると
+	往復が増え、供給が細ってデバイス側が underrun になる（2026-08-30、
+	64 バイトでは 20163 バイトの送出が途中で止まり ERROR 81 になった）。
+	詰まれば write が待たされるので、大きくしても流量調整は効く。
+*/
+var G850_STREAM_CHUNK = 1024;
+
+/*
+	詰まらせないための余裕。報告された空きからこれを引いた分しか書かない。
+
+	報告は 300ms ごとで、その間にもデバイスは食べ続けている。つまり実際の
+	空きは報告値より大きい。それでも余裕を残すのは、報告と書き込みの間に
+	何も食べなかった場合でも溢れさせないため。
+*/
+var G850_STREAM_MARGIN = 128;
+
+/* 行の "free=<n>" を取り出す。無ければ dflt */
+function g850StreamFree(line, dflt) {
+	var m = line.match(/free=(\d+)/);
+	return m ? parseInt(m[1], 10) : dflt;
+}
+
+/*
+	デバイスが報告した空きを受け取る。
+
+	**流量調整はこれだけが頼り。** 「詰まったら write が待たされる」という
+	前提は成り立たない（_streamHex のコメントを参照）。
+*/
+G850Link.prototype._setStreamCredit = function (free) {
+	var c = free - G850_STREAM_MARGIN;
+	this._streamCredit = (c > 0) ? c : 0;
+	if (this._creditWake) {
+		var wake = this._creditWake;
+		this._creditWake = null;
+		wake();
+	}
+};
+
+/*
+	16 進を、デバイスが「空いている」と言った分だけ書く。
+
+	**詰まらせてはいけない。** pyserial なら詰まっても write が待たされる
+	だけだが、**Firefox の Web Serial は待たずにストリームをエラーにする。**
+	一度エラーになると以後の書き込みがすべて失敗し、接続し直すまで戻らない
+	（2026-08-30 に実機への送出で発生）。
+*/
 G850Link.prototype._streamHex = async function (bytes) {
-	for (var off = 0; off < bytes.length; off += G850_STREAM_CHUNK) {
-		var end = Math.min(off + G850_STREAM_CHUNK, bytes.length);
+	var self = this;
+	var off = 0;
+
+	while (off < bytes.length) {
+		if (this._streamCredit <= 0) {
+			/* 次の空きの報告を待つ。進捗は 300ms ごとに来る */
+			await new Promise(function (resolve) {
+				self._creditWake = resolve;
+				setTimeout(function () {
+					if (self._creditWake === resolve) {
+						self._creditWake = null;
+						resolve();
+					}
+				}, 5000);
+			});
+			continue;
+		}
+
+		var n = Math.min(this._streamCredit, G850_STREAM_CHUNK,
+		                 bytes.length - off);
 		var hex = "";
-		for (var i = off; i < end; i++)
+		for (var i = off; i < off + n; i++)
 			hex += g850Hex2(bytes[i]);
+
 		await this._write(hex + "\n");
+		this._streamCredit -= n;
+		off += n;
 	}
 };
 
@@ -654,6 +723,9 @@ G850Link.prototype.playStream = async function (bytes, opts) {
 
 	var self = this;
 	var started = false;
+	this._streamCredit = 0;
+	this._creditWake = null;
+	this._streamError = null;
 
 	var rep = await this.command("PLAYS " + bytes.length + " " +
 	                             (opts.delayMs || 0), {
@@ -663,10 +735,21 @@ G850Link.prototype.playStream = async function (bytes, opts) {
 			/* +RDY を見てから流し始める。先に流すと頭を取り逃がす */
 			if (!started && line.indexOf("RDY") === 0) {
 				started = true;
-				self._streamHex(bytes);
+				self._setStreamCredit(g850StreamFree(line, 0));
+				self._streamHex(bytes).catch(function (e) {
+					/*
+						書き込みが失敗したら、以後は何を書いても失敗する。
+						つないだ状態も戻らないので中断して知らせる。
+					*/
+					self._streamError = e;
+					self.abort();
+				});
 			}
 		},
 		onProgress: function (line) {
+			var free = g850StreamFree(line, -1);
+			if (free >= 0)
+				self._setStreamCredit(free);
 			var m = line.match(/^PLAY (\d+)\/(\d+)\s+(\d+)/);
 			if (m && opts.onProgress)
 				opts.onProgress({
@@ -676,6 +759,10 @@ G850Link.prototype.playStream = async function (bytes, opts) {
 				});
 		}
 	});
+
+	if (this._streamError)
+		throw new Error("送り込みが途切れた (" + this._streamError.message +
+		                ")。接続し直してください");
 
 	var done = {};
 	rep.data.forEach(function (l) {

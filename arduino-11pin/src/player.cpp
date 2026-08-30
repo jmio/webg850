@@ -23,7 +23,15 @@ static uint8_t  s_h_bit;      /* いま出しているつもりのビット */
  * 352828 バイト送ろうとして 8000 バイトで詰まった（段階 6）。あの詰まりを
  * そのまま流量調整に使う。
  */
-#define STREAM_RING 512              /* 2 の冪。消費は毎秒 700 バイト前後 */
+/*
+ * リングの大きさ。2 の冪。
+ *
+ * 消費は毎秒 700 バイト前後なので、1024 バイトあれば 1.4 秒ぶんの余裕になる。
+ * ブラウザから流すとき、エミュレータ本体が同じスレッドで動いているため
+ * 供給が一瞬細ることがある。512 では足りなかった（2026-08-30、実機への
+ * 20163 バイトの送出が途中で underrun になり ERROR 81）。
+ */
+#define STREAM_RING 1024
 #define STREAM_TIMEOUT_MS 10000      /* これだけ来なければあきらめる */
 #define STREAM_PUMP_BYTES 4          /* 1 回の呼び出しで読む上限 */
 
@@ -235,6 +243,23 @@ static void maybeReport(void)
 	}
 	s_last_report = now;
 	uint32_t pct = s_bits_total ? (s_bits_done * 100 / s_bits_total) : 0;
+
+	if (s_streaming) {
+		/*
+			**リングの空きを毎回知らせる。**
+			ホストはこの範囲でしか書かない約束にしてある。
+
+			「詰まったら write が待たされる」という前提は pyserial では
+			成り立つが、**ブラウザの Web Serial では成り立たない。**
+			Firefox は待たずにストリームをエラーにし、以後の書き込みが
+			すべて失敗する（2026-08-30、実機への送出が途中で
+			"Error writing to stream" になった）。詰ませないのが唯一の道。
+		*/
+		emit('*', "PLAY %lu/%lu %lu%% free=%u", (unsigned long)s_bits_done,
+		     (unsigned long)s_bits_total, (unsigned long)pct,
+		     (unsigned)ringFree());
+		return;
+	}
 	emit('*', "PLAY %lu/%lu %lu%%", (unsigned long)s_bits_done,
 	     (unsigned long)s_bits_total, (unsigned long)pct);
 }
@@ -308,8 +333,9 @@ bool playerRun(const uint8_t *bin, uint32_t n, uint32_t delay_ms)
 	             (unsigned)g_tim.usb_mask, usbIrqCount());
 
 	if (s_streaming) {
-		/* ここから流し始めてよい、とホストに伝える */
-		emitBlocking('+', "RDY %lu", (unsigned long)n);
+		/* ここから流し始めてよい、とホストに伝える。free は最初の許容量 */
+		emitBlocking('+', "RDY %lu free=%u", (unsigned long)n,
+		             (unsigned)ringFree());
 	}
 
 	if (delay_ms && !waitUntilUs(micros() + delay_ms * 1000UL)) {
