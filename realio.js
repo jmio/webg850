@@ -6,15 +6,15 @@
 
 	用語に注意（取り違えやすい）:
 
-	  画面上の選択        エミュレータで実行   実機で実行   波形の向き
+	  「実機とやり取り」  エミュレータで実行   実機で実行   波形の向き
 	  ------------------  -------------------  -----------  ---------------
-	  BSAVE 先 = ファイル  BSAVE                --           --
-	  BSAVE 先 = 実機      BSAVE                BLOAD        Arduino → 実機
-	  BLOAD 元 = ファイル  BLOAD                --           --
-	  BLOAD 元 = 実機      BLOAD                BSAVE        実機 → Arduino
+	  off                 BSAVE / BLOAD        --           --
+	  on                  BSAVE                BLOAD        Arduino → 実機
+	  on                  BLOAD                BSAVE        実機 → Arduino
 
-	「BSAVE 先 = 実機」のとき実機側で実行するのは BLOAD である。
-	エミュレータが保存する先が実機なので、実機は読み込む側になる。
+	エミュレータが保存する先が実機のとき、実機側で実行するのは BLOAD。
+	エミュレータが読み込む元が実機のとき、実機側で実行するのは BSAVE。
+	保存と読み込みで実機側の操作が入れ替わる。
 
 	計画と実測は docs/plans/2026-08-30-webserial-real-machine-io.md を参照。
 */
@@ -51,30 +51,38 @@ function realioProgress(pct, label) {
 	realioEl("REALIO_BARTEXT").textContent = label || (pct + "%");
 }
 
-/* 出力先 / 入力元が「実機」か */
-function realioSaveToReal() {
-	var e = realioEl("REALIO_SAVE_REAL");
-	return e != null && e.checked;
-}
+/*
+	実機とやり取りするか。
 
-function realioLoadFromReal() {
-	var e = realioEl("REALIO_LOAD_REAL");
+	BSAVE の出力先と BLOAD の入力元は別々に選ばない。実機をつないで
+	いるときは両方向とも実機を相手にしたい場面しか無く、片方だけ
+	切り替える理由が無いため。外すとどちらも従来どおりファイルになる。
+*/
+function realioUseReal() {
+	var e = realioEl("REALIO_USE");
 	return e != null && e.checked;
 }
 
 function realioSetButtons() {
 	var on = (realioLink != null && realioLink.isOpen());
+	var use = realioUseReal();
+
 	realioEl("REALIO_CONNECT").textContent = on ? "切断" : "接続";
-	realioEl("REALIO_SEND").disabled = !on || realioBusy || realioPendingBin == null;
-	realioEl("REALIO_RECV").disabled = !on || realioBusy || !realioLoadFromReal();
-	realioEl("REALIO_ABORT").disabled = !realioBusy;
 	realioEl("REALIO_CONNECT").disabled = realioBusy;
 
-	/* 実機を選んでいなければ「実機へ送る」経路は使わせない */
-	var save = realioEl("REALIO_SAVE_REAL");
-	if (save && !on && save.checked) {
-		realioEl("REALIO_SAVE_FILE").checked = true;
+	/* つないでいないうちは実機を相手に選べないようにする */
+	var chk = realioEl("REALIO_USE");
+	if (chk) {
+		chk.disabled = !on || realioBusy;
+		if (!on && chk.checked) {
+			chk.checked = false;
+			use = false;
+		}
 	}
+
+	realioEl("REALIO_SEND").disabled = !on || realioBusy || realioPendingBin == null;
+	realioEl("REALIO_RECV").disabled = !on || realioBusy || !use;
+	realioEl("REALIO_ABORT").disabled = !realioBusy;
 }
 
 /* ---- 接続 ------------------------------------------------------------ */
@@ -117,7 +125,7 @@ async function realioToggleConnect() {
 	預かるだけにして、利用者が [実機へ送出] を押したときに送る。
 */
 function realioBsaveSink(bin, head) {
-	if (!realioSaveToReal())
+	if (!realioUseReal())
 		return false;
 	if (!realioLink || !realioLink.isOpen()) {
 		realioStatus("実機につながっていない。ファイルへ保存します", "ng");
@@ -216,7 +224,6 @@ async function realioReceive() {
 		realioProgress(100, "完了");
 
 		var info = bloadSetBytes(r.bin);
-		realioLastBin = r.bin;
 		realioStatus("取り込み完了 " + r.bin.length + " バイト" +
 		             "（本体 " + info.size + "）/ " +
 		             (r.ms / 1000).toFixed(1) + " 秒。" +
@@ -227,17 +234,6 @@ async function realioReceive() {
 	}
 	realioBusy = false;
 	realioSetButtons();
-}
-
-/* 直前に取り込んだ .bin。突き合わせ用に保存できるようにしておく */
-var realioLastBin = null;
-
-function realioSaveLast() {
-	if (realioLastBin == null) {
-		realioStatus("保存するものが無い", "ng");
-		return;
-	}
-	downloadBinary(realioLastBin, "capture.bin");
 }
 
 /* ---- 中断 ------------------------------------------------------------ */
@@ -256,11 +252,12 @@ function realioAbort() {
 	従来の動作は一切変わらない。
 */
 function realioInit() {
-	var box = realioEl("REALIO_BOX");
-	if (!box)
+	var rows = document.querySelectorAll(".REALIOROW");
+	if (rows.length === 0)
 		return;
 	if (!g850SerialAvailable()) {
-		box.style.display = "none";
+		for (var i = 0; i < rows.length; i++)
+			rows[i].style.display = "none";
 		return;
 	}
 	realioProgress(null);

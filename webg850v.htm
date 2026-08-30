@@ -143,63 +143,6 @@
                     <tr bgcolor="#55DD55">
                         <td align="center" colspan="6" class="SMALL" id="BSAVESTAT">&nbsp;</td>
                     </tr>
-                    <!--
-                        実機 (11pin) との受け渡し。Web Serial が使えない環境では
-                        realioInit() がこのブロックごと隠すので、従来の動作は変わらない。
-                    -->
-                    <tr bgcolor="#44CC44" id="REALIO_BOX">
-                        <td colspan="6">
-                            <table style="width:100%;border:0;">
-                                <tr>
-                                    <td class="SMALL" style="white-space:nowrap;">
-                                        <button class="SMALL" id="REALIO_CONNECT"
-                                                onclick="realioToggleConnect()">接続</button>
-                                        <b>実機 (11pin)</b>
-                                    </td>
-                                    <td class="SMALL">
-                                        BSAVE 先:
-                                        <input type="radio" name="REALIO_SAVE" id="REALIO_SAVE_FILE"
-                                               checked onclick="realioSetButtons()">
-                                        <label for="REALIO_SAVE_FILE">ファイル</label>
-                                        <input type="radio" name="REALIO_SAVE" id="REALIO_SAVE_REAL"
-                                               onclick="realioSetButtons()">
-                                        <label for="REALIO_SAVE_REAL"><b>実機</b></label>
-                                    </td>
-                                    <td class="SMALL">
-                                        BLOAD 元:
-                                        <input type="radio" name="REALIO_LOAD" id="REALIO_LOAD_FILE"
-                                               checked onclick="realioSetButtons()">
-                                        <label for="REALIO_LOAD_FILE">ファイル</label>
-                                        <input type="radio" name="REALIO_LOAD" id="REALIO_LOAD_REAL"
-                                               onclick="realioSetButtons()">
-                                        <label for="REALIO_LOAD_REAL"><b>実機</b></label>
-                                    </td>
-                                </tr>
-                                <tr>
-                                    <td class="SMALL" colspan="3">
-                                        <button class="SMALL" id="REALIO_SEND"
-                                                onclick="realioSend()">実機へ送出</button>
-                                        <button class="SMALL" id="REALIO_RECV"
-                                                onclick="realioReceive()">実機から取り込み</button>
-                                        <button class="SMALL" id="REALIO_ABORT"
-                                                onclick="realioAbort()">中断</button>
-                                        <button class="SMALL"
-                                                onclick="realioSaveLast()">取り込んだ .bin を保存</button>
-                                    </td>
-                                </tr>
-                                <tr>
-                                    <td colspan="3">
-                                        <div id="REALIO_BAR" style="visibility:hidden;border:1px solid #060;
-                                                    background:#fff;height:1.2em;position:relative;">
-                                            <div id="REALIO_BARFILL" style="background:#6c6;height:100%;width:0%;"></div>
-                                            <div id="REALIO_BARTEXT" class="SMALL"
-                                                 style="position:absolute;top:0;left:0;width:100%;text-align:center;"></div>
-                                        </div>
-                                    </td>
-                                </tr>
-                                <tr>
-                                    <td colspan="3" class="SMALL" id="REALIO_STAT">&nbsp;</td>
-                                </tr>
                 </table>
                 DISASM START:0x<textarea id="TEXT_START" cols="6" class="HEXINPUT">100</textarea>
                 COUNT:<textarea id="TEXT_COUNT" cols="6" class="HEXINPUT">10</textarea>
@@ -290,6 +233,59 @@
                         <td align="center"><div class="SMALL">Exp</div><button class="LARGE" value="GKEY_EQUAL">　=　</button></td>
                         <td align="center"><div class="SMALL">　</div><button class="LARGE" value="GKEY_PLUS">　+　</button></td>
                         <td align="center"><div class="SMALL">　</div><button class="LARGE" value="GKEY_RETURN">CR　</button></td>
+                    </tr>
+                </table>
+            </section>
+            <!--
+                実機 (11pin) との受け渡し。
+
+                置き場所: デバッグ表 (main1) ではなくキーボードの隣 (main2)。
+                main1 は液晶と高さが釣り合っているので、行を足すと液晶と
+                キーボードの間に隙間ができる。ここはキーボードの右が空いて
+                いるので高さに影響しない。
+
+                幅: table-layout:fixed と width を必ず指定すること。
+                #device は width:max-content なので、中身が押し広げると
+                画面全体が縮小されて崩れる。入れ子テーブルや
+                white-space:nowrap は使わない。
+
+                Web Serial が使えない環境では realioInit() が
+                REALIOROW の行をまとめて隠す。
+            -->
+            <section class="REALIO">
+                <table class="KEYBOARD" style="width:270px;background-color:#44CC44;">
+                    <tr bgcolor="#44CC44" class="REALIOROW">
+                        <td align="center" class="SMALL">
+                              <button class="SMALL" id="REALIO_CONNECT"
+                                      onclick="realioToggleConnect()">接続</button>
+                        </td>
+                        <td align="center" colspan="2" class="SMALL">
+                              <input type="checkbox" id="REALIO_USE"
+                                     onclick="realioSetButtons()"><label
+                                     for="REALIO_USE">実機とやり取り</label><br>
+                              BSAVE → 実機 / BLOAD ← 実機
+                        </td>
+                    </tr>
+                    <tr bgcolor="#44CC44" class="REALIOROW">
+                        <td align="center"><button class="SMALL" id="REALIO_SEND"
+                                onclick="realioSend()">送出</button></td>
+                        <td align="center"><button class="SMALL" id="REALIO_RECV"
+                                onclick="realioReceive()">取込</button></td>
+                        <td align="center"><button class="SMALL" id="REALIO_ABORT"
+                                onclick="realioAbort()">中断</button></td>
+                    </tr>
+                    <tr bgcolor="#44CC44" class="REALIOROW">
+                        <td colspan="3">
+                            <div id="REALIO_BAR" style="visibility:hidden;border:1px solid #060;
+                                        background:#fff;height:1.2em;position:relative;">
+                                <div id="REALIO_BARFILL" style="background:#6c6;height:100%;width:0%;"></div>
+                                <div id="REALIO_BARTEXT" class="SMALL"
+                                     style="position:absolute;top:0;left:0;width:100%;text-align:center;"></div>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr bgcolor="#44CC44" class="REALIOROW">
+                        <td colspan="3" class="SMALL" id="REALIO_STAT">&nbsp;</td>
                     </tr>
                 </table>
             </section>
