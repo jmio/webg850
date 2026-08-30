@@ -1,0 +1,14 @@
+# PlatformIO のビルド生成物
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# 較正結果や取り込んだデータの作業ファイル
+*.bin
+*.ihx
+*.csv
+cal-*.json
+
+# Python のキャッシュ
+__pycache__/
+*.pyc
