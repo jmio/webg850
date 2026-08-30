@@ -8,6 +8,8 @@
 *.ihx
 *.csv
 cal-*.json
+# ただし docs/ 以下は実測の記録なので追跡する
+!docs/cal-*.json
 
 # Python のキャッシュ
 __pycache__/

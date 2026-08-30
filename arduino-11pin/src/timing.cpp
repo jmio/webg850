@@ -13,6 +13,10 @@ Timing g_tim;
  */
 void timingSetProfile(TimingProfile p)
 {
+	/* 取り込みの既定。プロファイル切り替えでも戻す */
+	g_tim.cap_stream = 1;     /* 1 = 常に流す。GUI から途中経過を見せるため */
+	g_tim.irq_prio   = 11;    /* USB(12) より高く、タイマ(8) より低い */
+
 	/* --- どちらのプロファイルでも変えないもの（すべて実機実測）--- */
 	g_tim.bit0_us  = 162;      /* 最頻 162、平均 161.8、36413 個 */
 	g_tim.bit1_us  = 406;      /* 最頻 406、平均 406.0、214 個 */
@@ -94,6 +98,14 @@ bool timingSet(const char *key, uint32_t value)
 		g_tim.cap_mode = value ? 1 : 0;
 		return true;
 	}
+	if (strcmp(key, "capstream") == 0) {
+		g_tim.cap_stream = value ? 1 : 0;
+		return true;
+	}
+	if (strcmp(key, "irqprio") == 0) {
+		g_tim.irq_prio = value;
+		return true;
+	}
 	return false;
 }
 
@@ -106,6 +118,8 @@ void timingDump(void)
 	emitBlocking('+', "CFG invout=%u", (unsigned)g_tim.inv_out);
 	emitBlocking('+', "CFG invin=%u", (unsigned)g_tim.inv_in);
 	emitBlocking('+', "CFG capmode=%u", (unsigned)g_tim.cap_mode);
+	emitBlocking('+', "CFG capstream=%u", (unsigned)g_tim.cap_stream);
+	emitBlocking('+', "CFG irqprio=%lu", (unsigned long)g_tim.irq_prio);
 }
 
 uint32_t timingBlockBits(uint32_t data_bytes, bool is_block2)

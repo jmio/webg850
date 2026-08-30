@@ -64,7 +64,8 @@ class Device:
         self.ser.write((s + "\n").encode("ascii"))
         self.ser.flush()
 
-    def _read_until_done(self, timeout: float, on_progress=None) -> Reply:
+    def _read_until_done(self, timeout: float, on_progress=None,
+                         on_log=None) -> Reply:
         """'+OK...' か '!...' が来るまで読む。"""
         data: list[str] = []
         logs: list[str] = []
@@ -93,6 +94,8 @@ class Device:
                     return Reply(data, logs, progress, body)
                 elif kind == "#":
                     logs.append(body)
+                    if on_log:
+                        on_log(body)
                 elif kind == "*":
                     progress.append(body)
                     if on_progress:
@@ -101,9 +104,10 @@ class Device:
                     logs.append(line)
         raise TimeoutError("デバイスからの応答が途切れた")
 
-    def cmd(self, line: str, timeout: float = 10.0, on_progress=None) -> Reply:
+    def cmd(self, line: str, timeout: float = 10.0, on_progress=None,
+            on_log=None) -> Reply:
         self._write_line(line)
-        return self._read_until_done(timeout, on_progress)
+        return self._read_until_done(timeout, on_progress, on_log)
 
     def abort(self) -> None:
         self.ser.write(b"\x1b")
@@ -386,8 +390,17 @@ def cmd_play(dev: Device, a) -> int:
 
 def cmd_capture(dev: Device, a) -> int:
     print(f"取り込みを開始します（最長 {a.timeout} 秒）。実機で BSAVE を実行してください。")
+
+    def on_log(msg: str) -> None:
+        # 転送の開始を知らせる。capstream=2 のときは以降の進捗が止まるので
+        # 「止まった」のか「何も来ていない」のかを区別する手がかりになる。
+        if msg.startswith("cap begin"):
+            print(file=sys.stderr)
+            print("  CAP: 転送を検出（実機のタイミングで約 40 秒）",
+                  file=sys.stderr, flush=True)
+
     rep = dev.cmd(f"CAP {a.timeout}", timeout=a.timeout + 30,
-                  on_progress=progress_printer("CAP"))
+                  on_progress=progress_printer("CAP"), on_log=on_log)
     print(file=sys.stderr)
     for line in rep.data:
         if line.startswith(("R ", "DONE")):

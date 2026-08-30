@@ -73,15 +73,24 @@ python host/g850ctl.py -p COM16 play out.bin
 ```
 
 22 バイトの転送で約 3.3 秒（起動時の既定は `PROFILE FAST`）。
+2854 バイトなら送出 17.5 秒、取り込み 40.0 秒。
 うまくいかないときは `profile REAL` でヘッダを桁違いに長くして試す。
+
+**取り込みは実機の空き容量（`PRINT FRE(0)` で 27286 バイト）まで扱える。**
+12 KB に収まるものは貯めてから吐き、超えるものは取り込みながら流す
+（自動で切り替わる）。
 
 **別の個体につなぐときは較正から始めること。** 焼き込んである値は
 この 1 台（PC-G850V）の実測値である。
 
 ```
-python host/g850ctl.py -p COM16 cal --timeout 90 --save cal-other.json --apply
+python host/g850ctl.py -p COM16 cal --timeout 90 --save docs/cal-<日付>-<機種>.json --apply
 （表示が出たら実機で BSAVE を実行）
 ```
+
+較正結果は `docs/` 以下に置けば記録として追跡される。
+この 1 台のぶんは
+[docs/cal-2026-08-30-pc-g850v.json](docs/cal-2026-08-30-pc-g850v.json)。
 
 **較正 → 取り込み → 再生の順で進める。** 理由は
 [docs/experiment-plan.md](docs/experiment-plan.md) の
@@ -102,6 +111,20 @@ python host/g850ctl.py -p COM16 cal --timeout 90 --save cal-other.json --apply
 **11pin は出力と入力で極性が違う。** `0x18` bit7 = 1 は pin-7 が 5V、
 `0x1F` bit2 = 1 は pin-6 が **0V**。ファームウェアは `invout=1` でこれを吸収する。
 詳細は [docs/waveform.md](docs/waveform.md) の「極性」。
+
+## 割り込み優先度について（触る前に読むこと）
+
+エッジ割り込みの NVIC 優先度は **11 に固定してある**（`irqprio`）。
+Arduino の `attachInterrupt` が設定する既定値 12 は **USB と同じ**で、
+同一優先度は互いに横取りできないため、取り込み中に USB へ書くと
+ビットが落ちる。逆にタイマ（優先度 8）より高くすると `micros()` が
+飛んで幅の測定そのものが壊れる。
+
+> **使える値は 9・10・11 の 3 つだけ。**
+
+`CAP` の冒頭に出る `#cap irqn=<番号> prio=<値>` は**実際に適用された値**。
+`irqn=-1` なら優先度は設定されていない。
+経緯は [docs/experiment-log.md](docs/experiment-log.md) の「段階 B」。
 
 ## 注意
 

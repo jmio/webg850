@@ -1,4 +1,5 @@
 #include "calib.h"
+#include "capture.h"
 #include "config.h"
 #include "timing.h"
 #include "proto.h"
@@ -84,7 +85,11 @@ void calArm(void)
 	pinMode(PIN_XOUT, INPUT);
 	s_poll_last = readXoutRaw();
 	if (g_tim.cap_mode == 0) {
+		uint32_t before[32];
+		edgeIrqSnapshot(before);
 		attachInterrupt(digitalPinToInterrupt(PIN_XOUT), calIsr, CHANGE);
+		/* CAP と同じ優先度にする。既定の 12 では USB に横取りされる */
+		edgeIrqAfterAttach(before);
 	}
 	s_armed = true;
 }
@@ -158,10 +163,13 @@ void calRun(uint32_t timeout_ms)
 		if (millis() - t_start >= timeout_ms) {
 			break;
 		}
-		if (millis() - last_report >= 1000) {
+		/* 進捗は転送が始まる前だけ。取り込み中にシリアルへ書くと
+		 * エッジ割り込みを取りこぼす（capture.cpp の説明を参照）*/
+		if (s_mark_h == 0 && millis() - last_report >= 1000) {
 			last_report = millis();
-			emit('*', "CAL edges=%lu long=%u marks=%u", (unsigned long)s_edges,
-			     (unsigned)s_long_n, (unsigned)s_mark_h);
+			emit('*', "CAL waiting %lus edges=%lu",
+			     (unsigned long)((millis() - t_start) / 1000),
+			     (unsigned long)s_edges);
 		}
 	}
 

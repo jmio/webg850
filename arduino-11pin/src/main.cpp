@@ -461,6 +461,19 @@ static void dispatch(char *line)
 	} else if (eqi(cmd, "PINS")) {
 		pinsReport(idleName());
 		emitBlocking('+', "OK");
+	} else if (eqi(cmd, "IRQ")) {
+		/* 割り込みの優先度を調べる。取り込みの取りこぼしが
+		 * 優先度の横取りによるものかを判断するための材料 */
+		for (int i = 0; i < 32; i++) {
+			uint32_t ev = R_ICU->IELSR[i] & 0xFFu;
+			if (ev == 0) {
+				continue;
+			}
+			emitBlocking('+', "IRQ %d event=%02lX prio=%lu", i,
+			             (unsigned long)ev,
+			             (unsigned long)NVIC_GetPriority((IRQn_Type)i));
+		}
+		emitBlocking('+', "OK");
 	} else if (eqi(cmd, "IDLE")) {
 		cmdIdle(p);
 	} else if (eqi(cmd, "ACK")) {
