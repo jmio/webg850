@@ -385,7 +385,8 @@ static void cmdSelftest(char *args)
 
 static void cmdInfo(void)
 {
-	emitBlocking('+', "INFO name=%s ver=%s board=uno_r4_minima", FW_NAME, FW_VERSION);
+	emitBlocking('+', "INFO name=%s ver=%s board=%s", FW_NAME, FW_VERSION,
+	             BOARD_NAME_STR);
 	emitBlocking('+', "INFO pins xout=D%u xin=D%u busy=D%u ack=D%u",
 	             (unsigned)PIN_XOUT, (unsigned)PIN_XIN,
 	             (unsigned)PIN_BUSY, (unsigned)PIN_ACK);
@@ -578,9 +579,16 @@ void setup(void)
 	 * 見つかった本数を出しておく。0 のまま PLAY すると H を守れない。
 	 */
 	usbIrqScan();
-	emitBlocking('#', "usbmask=%u irqs=%d max=%luus",
+	emitBlocking('#', "usbmask=%u irqs=%d max=%luus board=%s",
 	             (unsigned)g_tim.usb_mask, usbIrqCount(),
-	             (unsigned long)g_tim.usb_mask_max_us);
+	             (unsigned long)g_tim.usb_mask_max_us, BOARD_NAME_STR);
+	if (g_tim.usb_mask && usbIrqCount() == 0) {
+		/*
+		 * 見つからないまま送出すると H を守れない。Uno R4 WiFi は
+		 * Serial が UART なのでここに来る（usbirq.h を参照）。
+		 */
+		emitBlocking('#', "warn no USB irq found; usbmask has no effect");
+	}
 }
 
 void loop(void)

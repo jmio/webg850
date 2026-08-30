@@ -1435,9 +1435,66 @@ DONE n=2854 ms=17918 status=ok hmax=418 hbad=0 hn=33846
 **`usbmask` と `playpump` を入れても既存の経路は壊れていない。**
 これで送出をストリーム化する土台ができた。
 
+### 2 台目で裏を取る（2026-08-30）
+
+2 台目（**Uno R4 WiFi**）をつなぎ、1 台目が送出、2 台目が取り込みという
+装置を作った（`host/twoboard.py`）。**測る側が別の MCU になる**ので、
+ループバックのように送出と取り込みの乱れが混ざらない。雑音は送出側の
+回線にしか流れないため、壊れれば送出側の責任だと言い切れる。
+
+配線は `送出 D3 -> 取り込み D2` と GND。逆向き（`取り込み D3 -> 送出 D2`）も
+つないでおくと、役割を入れ替えて試せる。D3 どうしを結ぶと出力がぶつかる。
+
+| 条件 | 送出側 `hmax` / `hbad` | 取り込み側 | 結果 |
+|:--|--:|:--|:--|
+| 雑音なし `usbmask=1` | 417 usec / 0 | 33846 bits・2 ブロック・パリティ OK | **sha 一致** |
+| 雑音 20000B/s `usbmask=0` | **11140 usec / 79** | 1641 bits・3 ブロック・**0.77 秒で崩壊** | 失敗 |
+| 雑音 20000B/s `usbmask=1` | 417 usec / 0 | 33846 bits・2 ブロック・パリティ OK | **sha 一致** |
+
+**壊れ方はビットの化けだけではなかった。** 11 ミリ秒に伸びた H は受信側の
+マーク判定（`capmark=7500`）を超えるため、**偽の区切り**として数えられる。
+4 本溜まった時点で転送が打ち切られ、17.9 秒かかるはずの転送が 0.77 秒で
+終わった。優先度 4 で `micros()` が飛んだときと同じ壊れ方である。
+
+### Uno R4 WiFi は Serial の実体が違う
+
+2 台目を用意して分かったこと。**R4 WiFi は `-DNO_USB` でビルドされる。**
+
+```
+uno_r4_wifi   ['-DARDUINO_UNOR4_WIFI', '-DNO_USB', ...]
+uno_r4_minima ['-DARDUINO_UNOR4_MINIMA', ...]
+```
+
+コアの `Arduino.h` が `#ifndef NO_USB` で `Serial` を切り替えているので、
+WiFi 版の `Serial` は RA4M1 のネイティブ USB ではなく、**ESP32-S3 へつながる
+UART (`_UART1_`)** になる。`IRQ` の出力も違う。
+
+```
+Minima                          WiFi
+IRQ 0 event=33 prio=12 usb      IRQ 0 event=1E prio=8       ← タイマ
+IRQ 1 event=34 prio=12 usb      IRQ 1 event=A9 prio=12      ┐
+IRQ 2 event=31 prio=12 usb      IRQ 2 event=AA prio=12      │ SCI (UART)
+IRQ 3 event=32 prio=12 usb      IRQ 3 event=A8 prio=12      │
+IRQ 4 event=1E prio=8           IRQ 4 event=AB prio=12      ┘
+                                IRQ 5 event=02 prio=11      ← エッジ
+```
+
+| | Minima | WiFi |
+|:--|:--|:--|
+| `Serial` の実体 | RA4M1 のネイティブ USB | ESP32-S3 への UART |
+| 邪魔をする割り込み | USB FS 0x31-0x34 (prio 12) | SCI 0xA8-0xAB (prio 12) |
+| `usbmask` | 効く | **空振り**（`irqs=0` と出る）|
+| `irqprio=11` | 正しい | **同じ理屈でそのまま正しい**（12 より高く 8 より低い）|
+
+優先度の構造が同じだったので、取り込み側の設定は変更なしで通った。
+
+**役割を固定した理由。** WiFi 版を送出側にするなら、止める相手を SCI に
+広げる必要がある。だが**UART をフロー制御なしで 406usec 止めると受信が
+溢れる**（USB は止めてもホストが NAK で待つので溢れない）。送出は Minima、
+取り込みは WiFi と決めておく。
+
 ### 残り
 
 ストリーム化そのもの（`pwmEncodeBlock` のコールバック版、リングバッファ、
-クレジット式のフロー制御、ホスト側の対応）は未着手。
-2 台目の Arduino があれば、1 台目が送出、2 台目が取り込みを担当して
-ポケコン抜きで端から端まで確かめられる。
+クレジット式のフロー制御、ホスト側の対応）は未着手。`twoboard.py` が
+できたので、実機を出さずに開発できる。

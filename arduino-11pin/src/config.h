@@ -14,6 +14,18 @@
 #define FW_VERSION "0.7.0"
 
 /*
+ * ボード名。INFO で出して、どちらに書き込んだものか分かるようにする。
+ * 2 台つないで送出と取り込みを分けるときに取り違えないため。
+ */
+#if defined(ARDUINO_UNOR4_WIFI)
+#define BOARD_NAME_STR "uno_r4_wifi"
+#elif defined(ARDUINO_UNOR4_MINIMA)
+#define BOARD_NAME_STR "uno_r4_minima"
+#else
+#define BOARD_NAME_STR "unknown-ra4m1"
+#endif
+
+/*
  * 起動時のプロファイル。0 = REAL（実機と同じ波形）、1 = FAST（短縮）。
  *
  * FAST を既定にしている。22 バイトの転送が 26.5 秒から 3.33 秒になり、

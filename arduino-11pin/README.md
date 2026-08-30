@@ -60,14 +60,42 @@ python host/g850ctl.py -p COM16 selftest --fast ../tools/tmp/bsave-test.bin
 python host/g850ctl.py -p COM16 selftest --fast --stress 2000 ../tools/tmp/bsave-test.bin
 ```
 
+### 2 台つないで往復させる（ポケコン不要）
+
+1 枚が送出、もう 1 枚が取り込みを担当する。**測る側が別の MCU になる**ので、
+ループバックのように送出の乱れと取り込みの乱れが混ざらない。
+
+```
+送出側 D3 ──> 取り込み側 D2      GND ──── GND
+```
+
+D3 どうしは結ばないこと（出力がぶつかる）。
+
+```
+python host/twoboard.py ../tools/tmp/basen.bin
+python host/twoboard.py ../tools/tmp/basen.bin --stress 20000 --usbmask 0   # 壊れる
+```
+
+送出側は `invout=0`（実機の XOUT と同じ向き）で流し、終わったら 1 に戻す。
+スクリプトが毎回明示するので、**実機に戻す前に手で確かめる必要はない。**
+
+`Uno R4 WiFi` を混ぜる場合、**そちらは取り込み側にすること。**
+WiFi 版は `-DNO_USB` でビルドされ、`Serial` が ESP32-S3 への UART になる。
+送出側に使うと `usbmask` が空振りし（`irqs=0` と出る）、UART をフロー制御
+なしで止めれば受信が溢れる。取り込み側なら `irqprio=11` がそのまま効く
+（邪魔をする SCI の優先度が USB と同じ 12 のため）。
+
 `--stress` は送出の 12288 バイト制限を外すための下ごしらえ。制限を外すには
 再生しながらシリアルから食べる必要があり、その間 USB の割り込みが H を
 伸ばさないことが前提になる。
 
-**実測すると、止めなければ 162usec の H が 11.2 ミリ秒まで伸びた**
-（33846 ビット中 93 本が化けた）。短い H の間だけ USB を止める `usbmask` と、
-L の区間で受信を捌く `playpump` が v0.7.0 から既定で入っている。止めれば
-化けは 0 になり、実機での往復も従来どおり通る。
+**実測すると、止めなければ 162usec の H が 11.2 ミリ秒まで伸びた。**
+2 台つないで確かめると、伸びた H が受信側の区切り判定を超えるため、
+**17.9 秒かかるはずの転送が 0.77 秒で打ち切られた。**
+
+短い H の間だけ USB を止める `usbmask` と、L の区間で受信を捌く
+`playpump` が v0.7.0 から既定で入っている。止めれば同じ雑音の下でも
+sha256 が一致し、実機での往復も従来どおり通る。
 
 詳細は [docs/protocol.md](docs/protocol.md) の「送出中の USB 割り込み」、
 経緯と数字は [docs/experiment-log.md](docs/experiment-log.md) の段階 6。
