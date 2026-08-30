@@ -614,3 +614,86 @@ G850Link.prototype.sendBin = async function (bytes, opts) {
 	await this.load(bytes, { onLog: opts.onLog });
 	return await this.play(opts);
 };
+
+/* ---- .bin を流し込みながら送る (PLAYS) -------------------------------- */
+
+/*
+	16 進を少しずつ書き込む。
+
+	**詰まったら待たされるのが正しい。** デバイスはリングが埋まると読むのを
+	やめ、USB が NAK を返してこちらの write が止まる。それがそのまま流量
+	調整になるので、クレジットのやり取りは要らない。
+*/
+var G850_STREAM_CHUNK = 64;
+
+G850Link.prototype._streamHex = async function (bytes) {
+	for (var off = 0; off < bytes.length; off += G850_STREAM_CHUNK) {
+		var end = Math.min(off + G850_STREAM_CHUNK, bytes.length);
+		var hex = "";
+		for (var i = off; i < end; i++)
+			hex += g850Hex2(bytes[i]);
+		await this._write(hex + "\n");
+	}
+};
+
+/*
+	貯めずに流し込みながら送出する。
+
+	**大きさに上限が無い。** デバイスのバッファは 12288 バイトで頭打ちに
+	なるが（RAM の都合で 13824 までしか増やせない）、こちらは 512 バイトの
+	リングしか使わない。実機の空き容量 27286 バイトの全部を送れる。
+
+	**先に実機で BLOAD を実行して待たせておくこと。** load() のような
+	CRC の突き合わせは無いが、デバイスが受け取ったバイト数 (fed) と
+	化けたビット数 (hbad) を返すので、それで確かめる。
+*/
+G850Link.prototype.playStream = async function (bytes, opts) {
+	opts = opts || {};
+	if (bytes.length < 49)
+		throw new Error(".bin が短すぎる: " + bytes.length + " バイト");
+
+	var self = this;
+	var started = false;
+
+	var rep = await this.command("PLAYS " + bytes.length + " " +
+	                             (opts.delayMs || 0), {
+		timeout: opts.timeout || 600000,
+		onLog: opts.onLog,
+		onData: function (line) {
+			/* +RDY を見てから流し始める。先に流すと頭を取り逃がす */
+			if (!started && line.indexOf("RDY") === 0) {
+				started = true;
+				self._streamHex(bytes);
+			}
+		},
+		onProgress: function (line) {
+			var m = line.match(/^PLAY (\d+)\/(\d+)\s+(\d+)/);
+			if (m && opts.onProgress)
+				opts.onProgress({
+					done: parseInt(m[1], 10),
+					total: parseInt(m[2], 10),
+					pct: parseInt(m[3], 10)
+				});
+		}
+	});
+
+	var done = {};
+	rep.data.forEach(function (l) {
+		if (l.indexOf("DONE ") === 0)
+			done = g850ParseKV(l.substring(5));
+	});
+	if (done.status && done.status !== "ok")
+		throw new Error("送出が完了しなかった: " + done.status);
+
+	var fed = parseInt(done.fed, 10);
+	if (fed !== bytes.length)
+		throw new Error("送り込んだ量が合わない: デバイス " + fed +
+		                " / こちら " + bytes.length);
+
+	return {
+		ms: parseInt(done.ms, 10) || 0,
+		n: parseInt(done.n, 10) || 0,
+		bad: parseInt(done.hbad, 10) || 0,
+		under: parseInt(done.under, 10) || 0
+	};
+};

@@ -142,18 +142,11 @@ function realioBsaveSink(bin, head) {
 		realioStatus("実機につながっていない。ファイルへ保存します", "ng");
 		return false;
 	}
-	if (bin.length > 12288) {
-		/*
-			ファームウェアの .bin バッファは 12288 バイト。
-			RAM の都合で 13824 までしか増やせない（ヒープ 8KB と
-			スタック 1KB が固定）。取り込み側に上限は無いが、
-			送出側だけこの制限がある。
-		*/
-		realioStatus(bin.length + " バイトは送出の上限 12288 を超える。" +
-		             "ファイルへ保存します", "ng");
-		return false;
-	}
-
+	/*
+		大きさの上限は無い。ファームウェアへ貯め込まず、送出しながら
+		流し込むため（webserial.js の playStream）。以前は 12288 バイトで
+		断っていたが、実機の空き容量 27286 バイトに届かなかった。
+	*/
 	realioPendingBin = bin;
 	realioStatus("受け取った " + bin.length + " バイト。" +
 	             "実機で BLOAD を実行してから [実機へ送出] を押してください");
@@ -176,21 +169,28 @@ async function realioSend() {
 	var bin = realioPendingBin;
 
 	try {
-		realioStatus("送り込み中… " + bin.length + " バイト");
-		realioProgress(0, "LOAD");
-		await realioLink.load(bin);
-
 		realioStatus("送出中… 実機が受け取っています");
-		var r = await realioLink.play({
+		realioProgress(0, "送出");
+
+		/*
+			貯め込まずに流し込みながら送る。大きさの上限が無いのと、
+			送り込みの待ち時間（12288 バイトで 0.6 秒）が無くなる。
+		*/
+		var r = await realioLink.playStream(bin, {
 			onProgress: function (p) {
 				realioProgress(p.pct, "送出 " + p.pct + "%");
 			}
 		});
 
 		realioProgress(100, "完了");
+		var warn = "";
+		if (r.bad > 0)
+			warn = "（波形が " + r.bad + " ビット化けた可能性あり）";
+		else if (r.under > 0)
+			warn = "（データ待ちで " + r.under + " 回止まった）";
 		realioStatus("送出完了 " + bin.length + " バイト / " +
-		             (r.ms / 1000).toFixed(1) + " 秒。" +
-		             "実機の画面右下に * が出れば成功", "ok");
+		             (r.ms / 1000).toFixed(1) + " 秒" + warn + "。" +
+		             "実機の画面右下に * が出れば成功", r.bad > 0 ? "ng" : "ok");
 		realioPendingBin = null;
 	} catch (e) {
 		realioProgress(null);

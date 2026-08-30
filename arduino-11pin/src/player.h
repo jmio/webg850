@@ -39,3 +39,25 @@ bool playerRun(const uint8_t *bin, uint32_t n, uint32_t delay_ms);
  *   n    … 測った本数
  */
 void playerHStats(uint32_t *max_us, uint32_t *bad, uint32_t *n);
+
+/*
+ * ホストから流し込みながら送出する（PLAYS）。
+ *
+ * 全部を RAM に貯める playerRun() は 12288 バイトで頭打ちになる。RAM の
+ * 上限は 13824 で、実機の空き容量 27286 バイトには届かない
+ * （docs/experiment-log.md 段階 A の「残った制約」）。こちらは 512 バイトの
+ * リングだけを使うので、大きさに上限が無い。
+ *
+ * n は .bin 全体の長さ（ヘッダ 48 + 本体）。中身は 16 進の文字列として
+ * Serial から読む。ホストは +RDY を見てから流し始めること。
+ *
+ * **待たされても壊れない。** データが足りないときに待つのはビットとビットの
+ * 間、つまり L の区間なので、H の幅には影響しない。受信側は H の長さだけで
+ * ビットを決めている。
+ *
+ * 流量が足りているかは戻り値ではなく under（待たされた回数）で見る。
+ */
+bool playerRunStream(uint32_t n, uint32_t delay_ms);
+
+/* 直前の PLAYS で受け取ったバイト数と、データ待ちで止まった回数 */
+void playerStreamStats(uint32_t *fed, uint32_t *under, bool *timeout);

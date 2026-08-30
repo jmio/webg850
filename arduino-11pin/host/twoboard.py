@@ -36,7 +36,7 @@ import time
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0] if "/" in __file__ else ".")
 
-from g850ctl import Device, upload, assemble_blocks   # noqa: E402
+from g850ctl import Device, upload, assemble_blocks, stream_hex   # noqa: E402
 import pwmcodec                                        # noqa: E402
 
 
@@ -62,6 +62,8 @@ def main(argv=None) -> int:
                     help="送出側の回線に毎秒 BPS バイトの雑音を流す")
     ap.add_argument("--usbmask", default="1", choices=["0", "1"],
                     help="送出中に USB の割り込みを止めるか（既定 1）")
+    ap.add_argument("--stream", action="store_true",
+                    help="貯めずに流し込みながら送る（PLAYS。大きさ無制限）")
     ap.add_argument("--real", action="store_true",
                     help="REAL プロファイルで流す（既定は FAST）")
     ap.add_argument("--timeout", type=int, default=120)
@@ -82,15 +84,34 @@ def main(argv=None) -> int:
     rx.cmd("PROFILE REAL" if a.real else "PROFILE FAST")
     tx.cmd("CFG invout 0")            # 板どうしは実機の XOUT と同じ向きで
     tx.cmd(f"CFG usbmask {a.usbmask}")
-    upload(tx, data)
+    if not a.stream:
+        upload(tx, data)
+
+    # **取り込みを始める前に線を LOW で駆動しておく。**
+    # 書き込み直後の送出側は XIN が Hi-Z で、浮いた線が長い H に見える。
+    # 取り込み側はそれを区切りと数えるので、4 本溜まった時点で転送が
+    # 打ち切られる（実測: 316 ミリ秒・14 ビットで終わった）。
+    # 実機の XOUT は常に駆動されているので、これは板どうしのときだけの話。
+    tx.cmd("IDLE 0")
 
     got: dict = {}
     th = start_capture(rx, got, a.timeout)
     time.sleep(2.0)                   # #cap armed を待つ。先に流すと頭を逃がす
 
-    print(f"送出中（usbmask={a.usbmask} 雑音={a.stress}B/s）…", flush=True)
+    mode = "PLAYS（流し込み）" if a.stream else "PLAY（貯め込み）"
+    print(f"送出中 {mode}（usbmask={a.usbmask} 雑音={a.stress}B/s）…", flush=True)
     tx.stress_bytes = 0
-    rep = tx.cmd("PLAY 0", timeout=200.0, stress_bps=a.stress)
+    if a.stream:
+        started: list = []
+
+        def on_data(line: str) -> None:
+            if line.startswith("RDY") and not started:
+                started.append(stream_hex(tx, data))
+
+        rep = tx.cmd(f"PLAYS {len(data)} 0", timeout=400.0,
+                     stress_bps=a.stress, on_data=on_data)
+    else:
+        rep = tx.cmd("PLAY 0", timeout=400.0, stress_bps=a.stress)
     for line in rep.data:
         if line.startswith("DONE"):
             print("  送出側:", line)

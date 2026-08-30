@@ -273,6 +273,59 @@ static void cmdPlay(char *args)
 }
 
 /*
+ * 流し込みながら送出する。
+ *
+ *   PLAYS <n> [delay_ms]
+ *     → +RDY <n>            これを見てから 16 進を流す
+ *     ← 16 進の文字列（改行・空白は自由。行の接頭辞は要らない）
+ *     → +DONE ... fed=.. under=..
+ *
+ * 貯めないので大きさに上限が無い。リングが埋まったら読むのをやめるだけで、
+ * あとは USB が NAK を返してホストを待たせる。フロー制御は要らない。
+ */
+static void cmdPlays(char *args)
+{
+	uint32_t n = toU32(nextTok(&args), 0);
+	if (n < 49) {
+		emitBlocking('!', "ERR size %lu (>=49)", (unsigned long)n);
+		return;
+	}
+	uint32_t delay_ms = toU32(nextTok(&args), 0);
+
+	abortClear();
+	uint32_t t0 = millis();
+	bool ok = playerRunStream(n, delay_ms);
+	uint32_t ms = millis() - t0;
+
+	uint32_t hmax, hbad, hn, fed, under;
+	bool tmo;
+	playerHStats(&hmax, &hbad, &hn);
+	playerStreamStats(&fed, &under, &tmo);
+
+	/*
+	 * 送り残しを読み捨ててから返事をする。中断したときは数千文字が
+	 * 残っており、捨てないと全部コマンドとして解釈される（LOAD で
+	 * 同じ目に遭っている。loadDrain のコメントを参照）。
+	 */
+	uint32_t quiet = millis();
+	while (millis() - quiet < 500 && millis() - t0 < ms + 3000) {
+		if (Serial.available()) {
+			Serial.read();
+			quiet = millis();
+		}
+	}
+
+	emitBlocking('+', "DONE n=%lu ms=%lu status=%s hmax=%lu hbad=%lu hn=%lu "
+	                  "fed=%lu under=%lu",
+	             (unsigned long)n, (unsigned long)ms,
+	             ok ? "ok" : (tmo ? "underrun" : "aborted"),
+	             (unsigned long)hmax, (unsigned long)hbad, (unsigned long)hn,
+	             (unsigned long)fed, (unsigned long)under);
+	emitBlocking('+', "OK");
+	abortClear();
+}
+
+/*
  * DECTEST - ビット列の組み立てと復号を RAM の中だけで往復させる。
  *
  * ピンも時間も使わないので実機も配線も要らない。ここが通っていれば、
@@ -493,6 +546,8 @@ static void dispatch(char *line)
 		binReport();
 	} else if (eqi(cmd, "PLAY")) {
 		cmdPlay(p);
+	} else if (eqi(cmd, "PLAYS")) {
+		cmdPlays(p);
 	} else if (eqi(cmd, "CAP")) {
 		abortClear();
 		captureRun(toU32(nextTok(&p), 120) * 1000UL);

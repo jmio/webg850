@@ -22,9 +22,27 @@ uint16_t pwmParity(const uint8_t *data, uint32_t len);
 /* ビットを 1 個ずつ受け取る先。false を返すと組み立てを打ち切る */
 typedef bool (*PwmBitSink)(void *ctx, uint8_t bit);
 
+/*
+ * データを 1 バイトずつ出す元。false を返すと組み立てを打ち切る。
+ *
+ * ホストから流し込みながら送出するために要る。全部を RAM に貯めると
+ * 12288 バイトで頭打ちになり、実機の空き容量 27286 バイトに届かない。
+ */
+typedef bool (*PwmByteSource)(void *ctx, uint8_t *out);
+
 bool pwmEncodeBlock(const uint8_t *data, uint32_t len,
                     uint32_t z1, uint32_t o, uint32_t z2,
                     PwmBitSink sink, void *ctx);
+
+/*
+ * 配列の代わりに元から引く版。
+ *
+ * パリティは配列を 2 度なめられないので、流しながら 1 の個数を数える。
+ * len は先に分かっている必要がある（ヘッダの長さと進捗の分母に要る）。
+ */
+bool pwmEncodeBlockFrom(uint32_t len, uint32_t z1, uint32_t o, uint32_t z2,
+                        PwmByteSource src, void *src_ctx,
+                        PwmBitSink sink, void *sink_ctx);
 
 /*
  * ヘッダの「1 の並び」として認めるのに必要な最低の長さ。

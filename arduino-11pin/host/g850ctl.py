@@ -66,7 +66,7 @@ class Device:
         self.ser.flush()
 
     def _read_until_done(self, timeout: float, on_progress=None,
-                         on_log=None) -> Reply:
+                         on_log=None, on_data=None) -> Reply:
         """'+OK...' か '!...' が来るまで読む。"""
         data: list[str] = []
         logs: list[str] = []
@@ -91,6 +91,8 @@ class Device:
                     if body == "OK" or body.startswith("OK "):
                         return Reply(data, logs, progress, None, body[3:])
                     data.append(body)
+                    if on_data:
+                        on_data(body)
                 elif kind == "!":
                     return Reply(data, logs, progress, body)
                 elif kind == "#":
@@ -106,17 +108,17 @@ class Device:
         raise TimeoutError("デバイスからの応答が途切れた")
 
     def cmd(self, line: str, timeout: float = 10.0, on_progress=None,
-            on_log=None, stress_bps: int = 0) -> Reply:
+            on_log=None, stress_bps: int = 0, on_data=None) -> Reply:
         self._write_line(line)
         if stress_bps <= 0:
-            return self._read_until_done(timeout, on_progress, on_log)
+            return self._read_until_done(timeout, on_progress, on_log, on_data)
 
         stop = threading.Event()
         t = threading.Thread(target=self._stress, args=(stress_bps, stop),
                              daemon=True)
         t.start()
         try:
-            return self._read_until_done(timeout, on_progress, on_log)
+            return self._read_until_done(timeout, on_progress, on_log, on_data)
         finally:
             stop.set()
             t.join(timeout=2.0)
@@ -144,6 +146,26 @@ class Device:
     def abort(self) -> None:
         self.ser.write(b"\x1b")
         self.ser.flush()
+
+
+def stream_hex(dev: Device, data: bytes, chunk: int = 64):
+    """`+RDY` を見てから .bin を 16 進で流す。
+
+    **詰まったら待たされる。** ボードはリングが埋まると読むのをやめ、USB が
+    NAK を返してこちらの write が止まる。それがそのまま流量調整になるので、
+    クレジットのやり取りは要らない。止まりうるので別スレッドで動かし、
+    本スレッドは進捗を読み続ける。
+    """
+    def work() -> None:
+        try:
+            for i in range(0, len(data), chunk):
+                dev.ser.write(data[i:i + chunk].hex().encode("ascii") + b"\n")
+        except Exception:                        # 中断や切断で落とさない
+            pass
+
+    t = threading.Thread(target=work, daemon=True)
+    t.start()
+    return t
 
 
 def show(rep: Reply, prefix: str = "") -> None:
@@ -423,6 +445,30 @@ def cmd_play(dev: Device, a) -> int:
     return 0 if rep.ok else 1
 
 
+def cmd_plays(dev: Device, a) -> int:
+    data = open(a.file, "rb").read()
+    info = pwmcodec.parse_bin(data)
+    print(f"{a.file}: {info}")
+    if info.problems and not a.force:
+        print("ヘッダに問題がある。強行するなら --force", file=sys.stderr)
+        return 1
+
+    print("実機側で BLOAD を実行して待たせてから、送出を始めます。")
+    started: list = []
+
+    def on_data(line: str) -> None:
+        # +RDY を見てから流し始める。先に流すと頭を取り逃がす
+        if line.startswith("RDY") and not started:
+            started.append(stream_hex(dev, data))
+
+    rep = dev.cmd(f"PLAYS {len(data)} {a.delay}", timeout=a.timeout,
+                  on_progress=progress_printer("PLAYS"), on_data=on_data,
+                  stress_bps=a.stress)
+    print(file=sys.stderr)
+    show(rep)
+    return 0 if rep.ok else 1
+
+
 def cmd_capture(dev: Device, a) -> int:
     print(f"取り込みを開始します（最長 {a.timeout} 秒）。実機で BSAVE を実行してください。")
 
@@ -642,6 +688,15 @@ def main(argv: list[str] | None = None) -> int:
                    help="送出中に毎秒 BPS バイトの雑音を流す"
                         "（USB 割り込みで H が伸びないかの試験。2000 程度で十分）")
     p.set_defaults(func=cmd_play)
+
+    p = sub.add_parser("plays", help="流し込みながら送出する（大きさ無制限）")
+    p.add_argument("file")
+    p.add_argument("--delay", type=int, default=0, help="送出開始までの待ち [ms]")
+    p.add_argument("--timeout", type=float, default=300.0)
+    p.add_argument("--force", action="store_true")
+    p.add_argument("--stress", type=int, default=0, metavar="BPS",
+                   help="送出中に毎秒 BPS バイトの雑音を流す")
+    p.set_defaults(func=cmd_plays)
 
     p = sub.add_parser("capture", help="実験 B: BSAVE を取り込んで .bin にする")
     p.add_argument("-o", "--out")

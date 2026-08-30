@@ -11,7 +11,7 @@
 #include <Arduino.h>
 
 #define FW_NAME    "g850-11pin"
-#define FW_VERSION "0.7.0"
+#define FW_VERSION "0.8.0"
 
 /*
  * ボード名。INFO で出して、どちらに書き込んだものか分かるようにする。

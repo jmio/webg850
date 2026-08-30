@@ -24,29 +24,60 @@ static bool putByte(uint8_t v, PwmBitSink sink, void *ctx)
 	return true;
 }
 
+bool pwmEncodeBlockFrom(uint32_t len, uint32_t z1, uint32_t o, uint32_t z2,
+                        PwmByteSource src, void *src_ctx,
+                        PwmBitSink sink, void *sink_ctx)
+{
+	for (uint32_t i = 0; i < z1; i++) {
+		if (!sink(sink_ctx, 0)) return false;
+	}
+	for (uint32_t i = 0; i < o; i++) {
+		if (!sink(sink_ctx, 1)) return false;
+	}
+	for (uint32_t i = 0; i < z2; i++) {
+		if (!sink(sink_ctx, 0)) return false;
+	}
+	if (!sink(sink_ctx, 1)) return false;   /* START_BIT */
+
+	uint32_t ones = 0;
+	for (uint32_t i = 0; i < len; i++) {
+		uint8_t v;
+		if (!src(src_ctx, &v)) return false;
+		ones += (uint32_t)__builtin_popcount(v);
+		if (!putByte(v, sink, sink_ctx)) return false;
+	}
+	uint16_t par = (uint16_t)ones;
+	if (!putByte((uint8_t)(par >> 8), sink, sink_ctx)) return false;
+	if (!putByte((uint8_t)(par & 0xFF), sink, sink_ctx)) return false;
+
+	return sink(sink_ctx, 1);   /* STOP_BIT */
+}
+
+/* 配列から引く元。pwmEncodeBlock を上の実装に載せるためだけのもの */
+struct ArraySrc {
+	const uint8_t *p;
+	uint32_t n, i;
+};
+
+static bool arraySrc(void *ctx, uint8_t *out)
+{
+	ArraySrc *s = (ArraySrc *)ctx;
+	if (s->i >= s->n) {
+		return false;
+	}
+	*out = s->p[s->i++];
+	return true;
+}
+
+/*
+ * 配列版。規則を 2 か所に書かないよう、上の実装を通す。
+ */
 bool pwmEncodeBlock(const uint8_t *data, uint32_t len,
                     uint32_t z1, uint32_t o, uint32_t z2,
                     PwmBitSink sink, void *ctx)
 {
-	for (uint32_t i = 0; i < z1; i++) {
-		if (!sink(ctx, 0)) return false;
-	}
-	for (uint32_t i = 0; i < o; i++) {
-		if (!sink(ctx, 1)) return false;
-	}
-	for (uint32_t i = 0; i < z2; i++) {
-		if (!sink(ctx, 0)) return false;
-	}
-	if (!sink(ctx, 1)) return false;   /* START_BIT */
-
-	for (uint32_t i = 0; i < len; i++) {
-		if (!putByte(data[i], sink, ctx)) return false;
-	}
-	uint16_t par = pwmParity(data, len);
-	if (!putByte((uint8_t)(par >> 8), sink, ctx)) return false;
-	if (!putByte((uint8_t)(par & 0xFF), sink, ctx)) return false;
-
-	return sink(ctx, 1);   /* STOP_BIT */
+	ArraySrc s = { data, len, 0 };
+	return pwmEncodeBlockFrom(len, z1, o, z2, arraySrc, &s, sink, ctx);
 }
 
 void pwmDecInit(PwmDec *d, PwmByteSink sink, void *ctx)
