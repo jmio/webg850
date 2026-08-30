@@ -107,6 +107,38 @@ static void binReport(void)
  *   END
  *   +OK n=<n> crc=<hhhh>
  */
+/*
+ * LOAD が途中で失敗したときに、残りの行を読み捨てる。
+ *
+ * これをしないと、まだ届いていない数百行の `D ...` が
+ * コマンドとして解釈され、`!ERR unknown command D` が延々と流れる。
+ * 12288 バイトを 32 バイト行で送ると 384 行あるので、
+ * 1 回の失敗でストリームが埋まってしまう。
+ *
+ * END を見るか、2 秒何も来なくなるまで捨てる。ここでは何も出力しない
+ * （エラーは呼び出し側が 1 行だけ出す）。
+ */
+static void loadDrain(void)
+{
+	for (;;) {
+		int len = readLine(s_line, sizeof(s_line), 2000);
+		if (len == READLINE_TIMEOUT) {
+			return;
+		}
+		if (len < 0) {
+			continue;   /* 長すぎる行。捨てて次へ */
+		}
+		char *p = s_line;
+		char *tok = nextTok(&p);
+		if (tok && eqi(tok, "END")) {
+			return;
+		}
+	}
+}
+
+/* エラーを 1 行出して、残りを読み捨てる */
+#define LOAD_FAIL(...) do { 		emitBlocking('!', __VA_ARGS__); 		loadDrain(); 		return; 	} while (0)
+
 static void cmdLoad(char *args)
 {
 	uint32_t n = toU32(nextTok(&args), 0);
@@ -123,9 +155,17 @@ static void cmdLoad(char *args)
 
 	for (;;) {
 		int len = readLine(s_line, sizeof(s_line), 10000);
+		if (len == READLINE_TOOLONG) {
+			/* 1 行に載せられるのは 92 バイトまで（行バッファ 192 文字、
+			 * "D XXXX " の 7 文字を除いた 184 文字が 16 進 92 バイト）。
+			 * これを報告しないと、次の行でオフセットがずれた形でしか
+			 * 現れず、本当の原因が分からない */
+			LOAD_FAIL("ERR line too long at %lu (max 92 bytes per line)",
+			          (unsigned long)got);
+		}
 		if (len < 0) {
 			emitBlocking('!', "ERR timeout at %lu", (unsigned long)got);
-			return;
+			return;   /* 相手が黙っているので読み捨てる必要は無い */
 		}
 		char *p = s_line;
 		char *tok = nextTok(&p);
@@ -137,35 +177,30 @@ static void cmdLoad(char *args)
 		}
 		if (eqi(tok, "ABORT")) {
 			emitBlocking('!', "ERR aborted");
-			return;
+			return;   /* 相手が止めたので読み捨てる必要は無い */
 		}
 		if (!eqi(tok, "D")) {
-			emitBlocking('!', "ERR expected D/END, got %s", tok);
-			return;
+			LOAD_FAIL("ERR expected D/END, got %s", tok);
 		}
 
 		char *offs = nextTok(&p);
 		char *hex = nextTok(&p);
 		if (!offs || !hex) {
-			emitBlocking('!', "ERR malformed D line");
-			return;
+			LOAD_FAIL("ERR malformed D line at %lu", (unsigned long)got);
 		}
 		uint32_t off = (uint32_t)strtoul(offs, NULL, 16);
 		if (off != got) {
-			emitBlocking('!', "ERR offset %lu expected %lu",
-			             (unsigned long)off, (unsigned long)got);
-			return;
+			LOAD_FAIL("ERR offset %lu expected %lu",
+			          (unsigned long)off, (unsigned long)got);
 		}
 		for (char *q = hex; q[0] && q[1]; q += 2) {
 			int hi = hexVal(q[0]);
 			int lo = hexVal(q[1]);
 			if (hi < 0 || lo < 0) {
-				emitBlocking('!', "ERR bad hex at %lu", (unsigned long)got);
-				return;
+				LOAD_FAIL("ERR bad hex at %lu", (unsigned long)got);
 			}
 			if (got >= n) {
-				emitBlocking('!', "ERR too much data");
-				return;
+				LOAD_FAIL("ERR too much data (declared %lu)", (unsigned long)n);
 			}
 			buf[got++] = (uint8_t)((hi << 4) | lo);
 		}

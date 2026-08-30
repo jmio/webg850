@@ -77,6 +77,7 @@ void emitBlocking(char kind, const char *fmt, ...)
 int readLine(char *buf, size_t cap, uint32_t timeout_ms)
 {
 	size_t len = 0;
+	bool over = false;
 	uint32_t start = millis();
 
 	for (;;) {
@@ -87,19 +88,24 @@ int readLine(char *buf, size_t cap, uint32_t timeout_ms)
 			}
 			if (c == '\n') {
 				buf[len] = '\0';
-				return (int)len;
+				/* 溢れた行を黙って切り詰めると、呼び出し側には
+				 * 「オフセットがずれた」といった症状しか見えず、
+				 * 本当の原因が分からなくなる。区別できるようにする */
+				return over ? READLINE_TOOLONG : (int)len;
 			}
 			if (c == '\r') {
 				continue;
 			}
 			if (len + 1 < cap) {
 				buf[len++] = (char)c;
+			} else {
+				over = true;
 			}
 			start = millis();
 			continue;
 		}
 		if (timeout_ms && (millis() - start) >= timeout_ms) {
-			return -1;
+			return READLINE_TIMEOUT;
 		}
 	}
 }

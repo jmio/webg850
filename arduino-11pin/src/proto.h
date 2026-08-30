@@ -17,6 +17,10 @@ void emitBlocking(char kind, const char *fmt, ...);
 
 /* 1 行読む。行末の CR/LF は取り除く。
  * 戻り値: 行の長さ。timeout_ms 経過したら -1 */
+/* 戻り値が負のときの意味。-2 でも改行までは読み捨ててあるので
+ * 次の行から続けられる */
+#define READLINE_TIMEOUT (-1)
+#define READLINE_TOOLONG (-2)   /* cap に収まらなかった */
 int readLine(char *buf, size_t cap, uint32_t timeout_ms);
 
 /* 長時間動作の中断要求を拾う。ESC(0x1B) か Ctrl-C(0x03) が来たら true */
