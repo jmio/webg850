@@ -11,7 +11,7 @@
 #include <Arduino.h>
 
 #define FW_NAME    "g850-11pin"
-#define FW_VERSION "0.6.0"
+#define FW_VERSION "0.7.0"
 
 /*
  * 起動時のプロファイル。0 = REAL（実機と同じ波形）、1 = FAST（短縮）。

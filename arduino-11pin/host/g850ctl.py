@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import threading
 import time
 from dataclasses import dataclass
 
@@ -105,9 +106,40 @@ class Device:
         raise TimeoutError("デバイスからの応答が途切れた")
 
     def cmd(self, line: str, timeout: float = 10.0, on_progress=None,
-            on_log=None) -> Reply:
+            on_log=None, stress_bps: int = 0) -> Reply:
         self._write_line(line)
-        return self._read_until_done(timeout, on_progress, on_log)
+        if stress_bps <= 0:
+            return self._read_until_done(timeout, on_progress, on_log)
+
+        stop = threading.Event()
+        t = threading.Thread(target=self._stress, args=(stress_bps, stop),
+                             daemon=True)
+        t.start()
+        try:
+            return self._read_until_done(timeout, on_progress, on_log)
+        finally:
+            stop.set()
+            t.join(timeout=2.0)
+
+    def _stress(self, bps: int, stop: threading.Event) -> None:
+        """転送中にホストから雑音を流し込む（USB の割り込みを起こすため）。
+
+        送るのは改行だけにする。ファームウェアは空行を黙って捨てるので
+        （main.cpp の dispatch は nextTok が NULL なら何もしない）、
+        転送後に "unknown command" が溢れない。転送中は pumpInput() が
+        ESC と Ctrl-C 以外を読み捨てるため、中身は届いても影響しない。
+
+        目的は帯域ではなく**割り込みを起こすこと**なので、まとめて
+        書かずに 20 回/秒に分けて送る。
+        """
+        chunk = max(1, bps // 20)
+        self.stress_bytes = 0
+        while not stop.is_set():
+            try:
+                self.stress_bytes += self.ser.write(b"\n" * chunk) or 0
+            except Exception:      # 切断や中断で落とさない
+                return
+            stop.wait(0.05)
 
     def abort(self) -> None:
         self.ser.write(b"\x1b")
@@ -381,8 +413,11 @@ def cmd_play(dev: Device, a) -> int:
         upload(dev, data, a.verbose)
 
     print("実機側で BLOAD を実行して待たせてから、送出を始めます。")
+    if a.stress:
+        print(f"送出中に毎秒 {a.stress} バイトの雑音を流します（USB 割り込みの負荷試験）。")
     rep = dev.cmd(f"PLAY {a.delay}", timeout=a.timeout,
-                  on_progress=progress_printer("PLAY"))
+                  on_progress=progress_printer("PLAY"),
+                  stress_bps=a.stress)
     print(file=sys.stderr)
     show(rep)
     return 0 if rep.ok else 1
@@ -528,8 +563,11 @@ def cmd_selftest(dev: Device, a) -> int:
     if a.file:
         data = open(a.file, "rb").read()
         upload(dev, data, a.verbose)
+    if a.stress:
+        print(f"送出中に毎秒 {a.stress} バイトの雑音を流します（USB 割り込みの負荷試験）。")
     rep = dev.cmd(f"SELFTEST {a.delay}", timeout=a.timeout,
-                  on_progress=progress_printer("SELFTEST"))
+                  on_progress=progress_printer("SELFTEST"),
+                  stress_bps=a.stress)
     print(file=sys.stderr)
     if not rep.ok:
         print(f"失敗: {rep.error}", file=sys.stderr)
@@ -600,6 +638,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--delay", type=int, default=0, help="送出開始までの待ち [ms]")
     p.add_argument("--timeout", type=float, default=180.0)
     p.add_argument("--force", action="store_true")
+    p.add_argument("--stress", type=int, default=0, metavar="BPS",
+                   help="送出中に毎秒 BPS バイトの雑音を流す"
+                        "（USB 割り込みで H が伸びないかの試験。2000 程度で十分）")
     p.set_defaults(func=cmd_play)
 
     p = sub.add_parser("capture", help="実験 B: BSAVE を取り込んで .bin にする")
@@ -632,6 +673,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--fast", action="store_true", help="短縮タイミングで行う（同じ接続の中で PROFILE FAST を送る）")
     p.add_argument("--delay", type=int, default=0)
     p.add_argument("--timeout", type=float, default=180.0)
+    p.add_argument("--stress", type=int, default=0, metavar="BPS",
+                   help="送出中に毎秒 BPS バイトの雑音を流す"
+                        "（USB 割り込みで H が伸びないかの試験。2000 程度で十分）")
     p.set_defaults(func=cmd_selftest)
 
     p = sub.add_parser("idle", help="XIN の待機レベル")

@@ -24,3 +24,18 @@ IdleDrive playerIdle(void);
  * 戻り値: 正常終了なら true、中断されたら false
  */
 bool playerRun(const uint8_t *bin, uint32_t n, uint32_t delay_ms);
+
+/*
+ * 直前の送出で、短い H が実際に何 usec 出ていたか。
+ *
+ * ループバックで測ると取り込み側の割り込み遅れと混ざって区別できない
+ * ので、**出した側で測る**。max が判定のしきい値 (cap_bit_us) に
+ * 近づいていれば、割り込みに H を伸ばされている。
+ *
+ *   max  … 短い H の最大値 [usec]
+ *   bad  … **化けた本数**。ビット 0 のつもりの H がしきい値以上に
+ *          伸びたもの（と、ビット 1 が縮んだもの）。0 でなければ
+ *          受信側は違うビットを読む
+ *   n    … 測った本数
+ */
+void playerHStats(uint32_t *max_us, uint32_t *bad, uint32_t *n);

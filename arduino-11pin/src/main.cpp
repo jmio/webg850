@@ -13,6 +13,7 @@
 #include "capture.h"
 #include "calib.h"
 #include "pwmblock.h"
+#include "usbirq.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -256,8 +257,17 @@ static void cmdPlay(char *args)
 	bool ok = playerRun(b, s_bin_len, delay_ms);
 	uint32_t ms = millis() - t0;
 
-	emitBlocking('+', "DONE n=%lu ms=%lu status=%s", (unsigned long)s_bin_len,
-	             (unsigned long)ms, ok ? "ok" : "aborted");
+	/*
+	 * 出した側で測った H の実測値。ループバックで読み返すと取り込み側の
+	 * 割り込み遅れと混ざるので、こちらを見ること。hover が 1 以上なら
+	 * 実際にビットが化けている。
+	 */
+	uint32_t hmax, hbad, hn;
+	playerHStats(&hmax, &hbad, &hn);
+	emitBlocking('+', "DONE n=%lu ms=%lu status=%s hmax=%lu hbad=%lu hn=%lu",
+	             (unsigned long)s_bin_len,
+	             (unsigned long)ms, ok ? "ok" : "aborted",
+	             (unsigned long)hmax, (unsigned long)hbad, (unsigned long)hn);
 	emitBlocking('+', "OK");
 	abortClear();
 }
@@ -363,8 +373,12 @@ static void cmdSelftest(char *args)
 	uint32_t ms = millis() - t0;
 	calDisarm();
 
-	emitBlocking('#', "played ms=%lu status=%s", (unsigned long)ms,
-	             ok ? "ok" : "aborted");
+	/* 出した側で測った H。読み返した値と並べて比べるためのもの */
+	uint32_t hmax, hbad, hn;
+	playerHStats(&hmax, &hbad, &hn);
+	emitBlocking('#', "played ms=%lu status=%s hmax=%lu hbad=%lu hn=%lu",
+	             (unsigned long)ms, ok ? "ok" : "aborted",
+	             (unsigned long)hmax, (unsigned long)hbad, (unsigned long)hn);
 	calReport();
 	abortClear();
 }
@@ -504,9 +518,10 @@ static void dispatch(char *line)
 			if (ev == 0) {
 				continue;
 			}
-			emitBlocking('+', "IRQ %d event=%02lX prio=%lu", i,
+			emitBlocking('+', "IRQ %d event=%02lX prio=%lu%s", i,
 			             (unsigned long)ev,
-			             (unsigned long)NVIC_GetPriority((IRQn_Type)i));
+			             (unsigned long)NVIC_GetPriority((IRQn_Type)i),
+			             usbIrqIsUsb(i) ? " usb" : "");
 		}
 		emitBlocking('+', "OK");
 	} else if (eqi(cmd, "IDLE")) {
@@ -557,6 +572,15 @@ void setup(void)
 	             (unsigned long)g_tim.hdr1_z1, (unsigned long)g_tim.hdr2_z1);
 	emitBlocking('#', "invout=%u invin=%u xin=Z (measured on PC-G850V 2026-08-30)",
 	             (unsigned)g_tim.inv_out, (unsigned)g_tim.inv_in);
+
+	/*
+	 * USB のスロットは Serial が立ち上がってからでないと IELSR に現れない。
+	 * 見つかった本数を出しておく。0 のまま PLAY すると H を守れない。
+	 */
+	usbIrqScan();
+	emitBlocking('#', "usbmask=%u irqs=%d max=%luus",
+	             (unsigned)g_tim.usb_mask, usbIrqCount(),
+	             (unsigned long)g_tim.usb_mask_max_us);
 }
 
 void loop(void)

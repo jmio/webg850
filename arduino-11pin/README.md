@@ -55,7 +55,22 @@ python host/g850ctl.py -p COM16 dectest ../tools/tmp/bsave-test.bin
 
 # D3 と D2 をジャンパでつなぐ: 自分が出したパルス幅を読み返す
 python host/g850ctl.py -p COM16 selftest --fast ../tools/tmp/bsave-test.bin
+
+# 同上 + 送出中にホストから雑音を流す（USB 割り込みで H が伸びないかの試験）
+python host/g850ctl.py -p COM16 selftest --fast --stress 2000 ../tools/tmp/bsave-test.bin
 ```
+
+`--stress` は送出の 12288 バイト制限を外すための下ごしらえ。制限を外すには
+再生しながらシリアルから食べる必要があり、その間 USB の割り込みが H を
+伸ばさないことが前提になる。
+
+**実測すると、止めなければ 162usec の H が 11.2 ミリ秒まで伸びた**
+（33846 ビット中 93 本が化けた）。短い H の間だけ USB を止める `usbmask` と、
+L の区間で受信を捌く `playpump` が v0.7.0 から既定で入っている。止めれば
+化けは 0 になり、実機での往復も従来どおり通る。
+
+詳細は [docs/protocol.md](docs/protocol.md) の「送出中の USB 割り込み」、
+経緯と数字は [docs/experiment-log.md](docs/experiment-log.md) の段階 6。
 
 ### 実機につないでから
 
